@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Windows / IDE
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+.tmp/
+
+# Сборка
+build/
+dist/
+*.spec
+
+# Данные приложения (создаются при запуске)
+data/library.db
+data/library.db-*
+data/settings.json
+data/*.log
+data/covers/
+data/images/
+
+# Прочее
+*.log

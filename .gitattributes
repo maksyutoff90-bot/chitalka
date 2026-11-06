@@ -1,0 +1,11 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.epub binary
+*.fb2 binary
+*.zip binary
