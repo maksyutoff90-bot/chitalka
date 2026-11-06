@@ -530,6 +530,12 @@ class ProgressBar(tk.Canvas):
         self.width = width
         self.height = height
         self._value = 0.0
+        self.bind("<Configure>", self._on_configure)
+
+    def _on_configure(self, event) -> None:
+        if abs(int(event.width) - int(self.width)) > 1:
+            self.width = int(event.width)
+            self._draw()
 
     def set(self, value: float) -> None:
         self._value = max(0.0, min(100.0, value))

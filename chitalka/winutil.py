@@ -68,6 +68,7 @@ user32.SetWindowPos.argtypes = [
 ]
 user32.BringWindowToTop.argtypes = [wintypes.HWND]
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.GetForegroundWindow.restype = wintypes.HWND
 gdi32.GetDIBits.argtypes = [
     wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
     ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT,
@@ -154,3 +155,10 @@ def bring_to_front(widget) -> None:
         user32.UpdateWindow(hwnd)
     except Exception:
         pass
+
+
+def is_foreground(widget) -> bool:
+    try:
+        return int(user32.GetForegroundWindow() or 0) == _hwnd(widget)
+    except Exception:
+        return False

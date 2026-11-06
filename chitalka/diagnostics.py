@@ -16,6 +16,7 @@ from .db import LibraryDB
 from .formats import load_document, parse_meta
 from .importer import Importer
 from .layout import LayoutStyle, layout_document
+from . import opds
 
 
 def _say(message: str) -> None:
@@ -100,6 +101,38 @@ def run_selftest() -> int:
 
         files = _sample_files()
         lines.append(f"Файлов в data/books: {len(files)}")
+
+        sample_feed = b"""<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>Test catalog</title>
+<entry>
+  <title>Sample book</title>
+  <author><name>Sample author</name></author>
+  <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/books/sample.epub"/>
+</entry>
+</feed>"""
+        try:
+            parsed = opds.parse_feed(sample_feed, "https://example.org/catalog/")
+            entry = parsed.entries[0]
+            lines.append(
+                f"OPDS-парсер: записей {len(parsed.entries)}, "
+                f"EPUB {entry.acquisitions.get('epub', '—')}"
+            )
+            if not entry.acquisitions.get("epub", "").endswith("/books/sample.epub"):
+                ok = False
+                lines.append("ОШИБКА: OPDS не разрешил относительную ссылку")
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            lines.append(f"ОШИБКА OPDS: {exc}")
+
+        stats = db.stats_overview(load_settings().monthly_goal_minutes)
+        lines.append(
+            f"Статистика: сегодня {stats['today_seconds']} с, "
+            f"серия {stats['streak']} дн., цель {stats['goal_minutes']} мин"
+        )
+        if stats["today_seconds"] < 0 or "daily" not in stats or len(stats["daily"]) != 30:
+            ok = False
+            lines.append("ОШИБКА: статистика вернула некорректные данные")
         for path in files:
             try:
                 meta = parse_meta(path)
@@ -212,6 +245,31 @@ def run_selftest() -> int:
                         ok = False
                 reader.close()
                 _pump(app, 0.5)
+                try:
+                    sessions = db.conn.execute(
+                        "SELECT COUNT(*) FROM reading_sessions"
+                    ).fetchone()[0]
+                    lines.append(f"Сессий чтения: {sessions}")
+                    if sessions < 1:
+                        ok = False
+                        lines.append("ОШИБКА: сессия чтения не записалась")
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА сессий: {exc}")
+                try:
+                    app.open_stats()
+                    _pump(app, 0.8)
+                    stats_window = getattr(app, "stats_window", None)
+                    if stats_window is None or not stats_window.winfo_exists():
+                        ok = False
+                        lines.append("ОШИБКА: окно статистики не открылось")
+                    else:
+                        lines.append("Окно статистики: открыто")
+                        stats_window.destroy()
+                        app.stats_window = None
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА статистики: {exc}")
             else:
                 ok = False
                 lines.append("ОШИБКА: окно чтения не открылось")

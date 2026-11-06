@@ -19,6 +19,7 @@ from ..formats.model import Block, Document, clean_text
 from ..formats.pdf import PdfBook
 from ..layout import LayoutResult, LayoutStyle, layout_document
 from ..theme import Palette, READING_THEMES, ReadingTheme, reading_theme
+from ..winutil import is_foreground
 from .icons import draw_icon
 from .widgets import (
     IconButton,
@@ -98,6 +99,11 @@ class ReaderWindow(tk.Toplevel):
         self._pdf_photos: dict[tuple, ImageTk.PhotoImage] = {}
         self._panel_buttons: dict[str, IconButton] = {}
         self._swatches: dict[str, tk.Canvas] = {}
+        self.session_id: int | None = None
+        self._session_seconds = 0
+        self._session_pages = 0
+        self._last_tick = time.monotonic()
+        self._last_activity = time.monotonic()
 
         self.title(f"{row['title']} — {APP_NAME}")
         self.configure(bg=palette.bg)
@@ -120,7 +126,19 @@ class ReaderWindow(tk.Toplevel):
         self.bind("<Control-b>", lambda _e: self._open_panel("bookmarks"))
         self.bind("<Alt-Left>", lambda _e: self._back_history())
         self.bind("<Control-c>", lambda _e: self._copy_page())
+        for sequence in ("<Motion>", "<Key>", "<Button-1>"):
+            self.bind(sequence, self._touch_activity, add="+")
         self.after(60, self._load)
+        self.after(220, self._activate)
+
+    def _activate(self) -> None:
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            self.canvas.focus_set()
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------ UI
     def _build(self) -> None:
@@ -239,6 +257,7 @@ class ReaderWindow(tk.Toplevel):
                 self.loading.configure(text="Вёрстка…")
                 self.update_idletasks()
                 self._layout_text(initial=True)
+            self._start_session()
             self.configure(cursor="")
         except Exception as exc:  # noqa: BLE001
             self.configure(cursor="")
@@ -511,6 +530,62 @@ class ReaderWindow(tk.Toplevel):
     def _total_pages(self) -> int:
         return self.page_count if self.is_pdf else len(self.pages)
 
+    # -------------------------------------------------------------- статистика
+    def _start_session(self) -> None:
+        try:
+            self.session_id = self.db.begin_session(self.book_id)
+        except Exception:
+            self.session_id = None
+        self._last_tick = time.monotonic()
+        self._last_activity = time.monotonic()
+        self.after(30_000, self._tick_session)
+
+    def _touch_activity(self, _event=None) -> None:
+        self._last_activity = time.monotonic()
+
+    def _current_session_seconds(self) -> int:
+        now = time.monotonic()
+        delta = now - self._last_tick
+        self._last_tick = now
+        if delta <= 0:
+            return 0
+        try:
+            foreground = is_foreground(self)
+        except Exception:
+            foreground = False
+        try:
+            focused = self.focus_displayof() is not None
+            visible = bool(self.winfo_viewable()) and self.state() != "iconic"
+        except tk.TclError:
+            focused = False
+            visible = False
+        active = (foreground or focused) and visible and (now - self._last_activity) < 300
+        if active:
+            self._session_seconds += int(min(delta, 60))
+        return self._session_seconds
+
+    def _tick_session(self) -> None:
+        if self._closing:
+            return
+        self._current_session_seconds()
+        self._save_session()
+        self.after(30_000, self._tick_session)
+
+    def _save_session(self) -> None:
+        if not self.session_id:
+            return
+        try:
+            self.db.update_session(self.session_id, self._session_seconds, self._session_pages)
+        except Exception:
+            pass
+
+    def _finish_session(self) -> None:
+        if not self.session_id:
+            return
+        self._current_session_seconds()
+        self._save_session()
+        self.session_id = None
+
     # ------------------------------------------------------------------ навигация
     def _on_slider(self, value: float) -> None:
         total = self._total_pages()
@@ -531,7 +606,11 @@ class ReaderWindow(tk.Toplevel):
                 self.history.pop(0)
         if index == self.page_index and self._ready:
             return
+        changed = index != self.page_index
         self.page_index = index
+        if changed:
+            self._session_pages += 1
+            self._touch_activity()
         if self.is_pdf:
             self._render_pdf()
         else:
@@ -1266,6 +1345,10 @@ class ReaderWindow(tk.Toplevel):
         if self._closing:
             return
         self._closing = True
+        try:
+            self._finish_session()
+        except Exception:
+            pass
         try:
             self._save_progress()
         except Exception:

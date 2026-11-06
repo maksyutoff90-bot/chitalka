@@ -52,11 +52,12 @@ if not _is_writable(DATA_DIR):
 BOOKS_DIR = DATA_DIR / "books"
 COVERS_DIR = DATA_DIR / "covers"
 IMAGES_DIR = DATA_DIR / "images"
+OPDS_CACHE_DIR = DATA_DIR / "opds_covers"
 DB_PATH = DATA_DIR / "library.db"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 CRASH_LOG = DATA_DIR / "crash.log"
 
-for _folder in (BOOKS_DIR, COVERS_DIR, IMAGES_DIR):
+for _folder in (BOOKS_DIR, COVERS_DIR, IMAGES_DIR, OPDS_CACHE_DIR):
     _folder.mkdir(parents=True, exist_ok=True)
 
 APP_ICON = DATA_DIR / "app.ico"
@@ -80,6 +81,7 @@ class Settings:
     show_header: bool = True
     show_footer: bool = True
     chapter_page_break: bool = True
+    monthly_goal_minutes: int = 600
     window_geometry: str = "1440x900+40+30"
     reader_geometry: str = "1140x850+80+20"
     folders: list[str] = None       # type: ignore[assignment]

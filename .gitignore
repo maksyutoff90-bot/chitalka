@@ -27,6 +27,12 @@ data/settings.json
 data/*.log
 data/covers/
 data/images/
+data/opds_covers/
+data/books/Каталоги/
+
+# Тестовые артефакты
+test_*_tmp.py
+test_*.py
 
 # Прочее
 *.log

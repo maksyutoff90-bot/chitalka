@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -53,6 +53,23 @@ CREATE INDEX IF NOT EXISTS idx_bookmarks_book ON bookmarks(book_id);
 CREATE TABLE IF NOT EXISTS folders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     path        TEXT NOT NULL UNIQUE,
+    added_at    TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS reading_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id     INTEGER NOT NULL DEFAULT 0,
+    started_at  TEXT NOT NULL DEFAULT '',
+    ended_at    TEXT NOT NULL DEFAULT '',
+    seconds     INTEGER NOT NULL DEFAULT 0,
+    pages       INTEGER NOT NULL DEFAULT 0,
+    date        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_date ON reading_sessions(date);
+CREATE INDEX IF NOT EXISTS idx_sessions_book ON reading_sessions(book_id);
+CREATE TABLE IF NOT EXISTS catalogs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    url         TEXT NOT NULL UNIQUE,
     added_at    TEXT NOT NULL DEFAULT ''
 );
 """
@@ -333,6 +350,137 @@ class LibraryDB:
         self.conn.execute(
             "UPDATE bookmarks SET note=? WHERE id=?", (note, int(bookmark_id))
         )
+        self.conn.commit()
+
+    # -------------------------------------------------------------- статистика
+    def begin_session(self, book_id: int, started_at: str | None = None) -> int:
+        now = datetime.now()
+        started = started_at or now.isoformat(timespec="seconds")
+        cur = self.conn.execute(
+            "INSERT INTO reading_sessions (book_id, started_at, ended_at, seconds, pages, date) "
+            "VALUES (?,?,?,0,0,?)",
+            (int(book_id), started, "", now.date().isoformat()),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def update_session(self, session_id: int, seconds: int, pages: int,
+                       ended_at: str | None = None) -> None:
+        self.conn.execute(
+            "UPDATE reading_sessions SET seconds=?, pages=?, ended_at=? WHERE id=?",
+            (max(0, int(seconds)), max(0, int(pages)),
+             ended_at or datetime.now().isoformat(timespec="seconds"), int(session_id)),
+        )
+        self.conn.commit()
+
+    def stats_overview(self, goal_minutes: int = 600) -> dict:
+        today = date.today()
+        today_s = today.isoformat()
+        week_start = (today - timedelta(days=6)).isoformat()
+        month_prefix = today.strftime("%Y-%m")
+        month_start = today.replace(day=1).isoformat()
+        thirty_start = (today - timedelta(days=29)).isoformat()
+
+        def totals(where: str = "", params: tuple = ()) -> tuple[int, int]:
+            sql = ("SELECT COALESCE(SUM(seconds),0), COALESCE(SUM(pages),0) "
+                   "FROM reading_sessions" + (" WHERE " + where if where else ""))
+            row = self.conn.execute(sql, params).fetchone()
+            return int(row[0] or 0), int(row[1] or 0)
+
+        today_sec, today_pages = totals("date=?", (today_s,))
+        week_sec, week_pages = totals("date>=?", (week_start,))
+        month_sec, month_pages = totals("date LIKE ?", (month_prefix + "%",))
+        total_sec, total_pages = totals()
+
+        rows = self.conn.execute(
+            "SELECT DISTINCT date FROM reading_sessions WHERE seconds > 0 ORDER BY date DESC"
+        ).fetchall()
+        days = [str(row["date"]) for row in rows if row["date"]]
+        streak = 0
+        if days:
+            anchor = today
+            if days[0] != today_s:
+                anchor = today - timedelta(days=1)
+                if days[0] != anchor.isoformat():
+                    anchor = None
+            if anchor is not None:
+                available = set(days)
+                cursor = anchor
+                while cursor.isoformat() in available:
+                    streak += 1
+                    cursor -= timedelta(days=1)
+
+        daily_rows = self.conn.execute(
+            "SELECT date, SUM(seconds) AS sec, SUM(pages) AS pages "
+            "FROM reading_sessions WHERE date>=? GROUP BY date",
+            (thirty_start,),
+        ).fetchall()
+        by_date = {str(row["date"]): (int(row["sec"] or 0), int(row["pages"] or 0))
+                   for row in daily_rows}
+        daily = []
+        for offset in range(29, -1, -1):
+            day = today - timedelta(days=offset)
+            sec, pages = by_date.get(day.isoformat(), (0, 0))
+            daily.append({"date": day.isoformat(), "seconds": sec, "pages": pages})
+
+        top_rows = self.conn.execute(
+            "SELECT book_id, SUM(seconds) AS sec, SUM(pages) AS pages "
+            "FROM reading_sessions WHERE seconds>0 AND book_id>0 "
+            "GROUP BY book_id ORDER BY sec DESC LIMIT 5"
+        ).fetchall()
+        top = []
+        for row in top_rows:
+            book = self.get(int(row["book_id"]))
+            if book is None:
+                continue
+            top.append({
+                "book_id": int(row["book_id"]),
+                "title": book["title"],
+                "author": book["author"],
+                "cover": book["cover"],
+                "seconds": int(row["sec"] or 0),
+                "pages": int(row["pages"] or 0),
+            })
+
+        month_goal_seconds = max(1, int(goal_minutes)) * 60
+        return {
+            "today_seconds": today_sec,
+            "today_pages": today_pages,
+            "week_seconds": week_sec,
+            "week_pages": week_pages,
+            "month_seconds": month_sec,
+            "month_pages": month_pages,
+            "total_seconds": total_sec,
+            "total_pages": total_pages,
+            "streak": streak,
+            "daily": daily,
+            "top": top,
+            "goal_minutes": int(goal_minutes),
+            "goal_seconds": month_goal_seconds,
+            "goal_percent": min(100.0, month_sec / month_goal_seconds * 100),
+            "month_label": today.strftime("%Y-%m"),
+            "month_start": month_start,
+            "reading_days": len(days),
+        }
+
+    # -------------------------------------------------------------- каталоги
+    def catalogs(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM catalogs ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+
+    def add_catalog(self, name: str, url: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO catalogs (name, url, added_at) VALUES (?,?,?) "
+            "ON CONFLICT(url) DO UPDATE SET name=excluded.name",
+            (name.strip() or url.strip(), url.strip(), _now()),
+        )
+        self.conn.commit()
+        row = self.conn.execute("SELECT id FROM catalogs WHERE url=?", (url.strip(),)).fetchone()
+        return int(row["id"]) if row else int(cur.lastrowid)
+
+    def remove_catalog(self, catalog_id: int) -> None:
+        self.conn.execute("DELETE FROM catalogs WHERE id=?", (int(catalog_id),))
         self.conn.commit()
 
     # -------------------------------------------------------------- папки

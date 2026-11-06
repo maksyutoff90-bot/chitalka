@@ -396,6 +396,12 @@ class LibraryApp(tk.Tk):
         self.nav_fav = NavItem(self.sidebar, palette, "heart", "Избранное",
                                lambda: self._set_status_filter("favorite"))
         self.nav_fav.pack(fill="x", padx=10, pady=1)
+        self.nav_stats = NavItem(self.sidebar, palette, "chart", "Статистика",
+                                 self.open_stats)
+        self.nav_stats.pack(fill="x", padx=10, pady=1)
+        self.nav_catalogs = NavItem(self.sidebar, palette, "globe", "Каталоги",
+                                    self.open_catalogs)
+        self.nav_catalogs.pack(fill="x", padx=10, pady=1)
 
         tk.Label(self.sidebar, text="ПАПКИ", bg=palette.panel, fg=palette.dim,
                  font=(UI, 7, "bold"), anchor="w").pack(fill="x", padx=22, pady=(22, 6))
@@ -1034,6 +1040,58 @@ class LibraryApp(tk.Tk):
         self.settings.save()
         self._refresh()
         self._render_detail()
+        stats = getattr(self, "stats_window", None)
+        if stats is not None:
+            try:
+                if stats.winfo_exists():
+                    stats.refresh()
+            except tk.TclError:
+                self.stats_window = None
+
+    def open_stats(self) -> None:
+        from .stats import StatsWindow
+
+        stats = getattr(self, "stats_window", None)
+        if stats is not None:
+            try:
+                if stats.winfo_exists():
+                    stats.lift()
+                    stats.refresh()
+                    return
+            except tk.TclError:
+                pass
+        try:
+            self.stats_window = StatsWindow(
+                self, self.settings, self.db, self.palette, self.cover_cache
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Статистика", f"Не удалось открыть статистику:\n{exc}",
+                                 parent=self)
+
+    def open_catalogs(self) -> None:
+        from .catalog import CatalogWindow
+
+        catalog = getattr(self, "catalog_window", None)
+        if catalog is not None:
+            try:
+                if catalog.winfo_exists():
+                    catalog.lift()
+                    return
+            except tk.TclError:
+                pass
+        try:
+            self.catalog_window = CatalogWindow(
+                self, self.settings, self.db, self.palette, self.cover_cache,
+                on_imported=self._catalog_imported,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Каталоги", f"Не удалось открыть каталоги:\n{exc}",
+                                 parent=self)
+
+    def _catalog_imported(self) -> None:
+        self._refresh()
+        if self.selected_id:
+            self._render_detail()
 
     # ------------------------------------------------------------------ закрытие
     def _on_close(self) -> None:

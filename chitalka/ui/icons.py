@@ -137,6 +137,24 @@ def draw_icon(canvas: tk.Canvas, name: str, cx: float, cy: float, size: float,
     elif name == "moon":
         canvas.create_oval(left + 2, top + 1, right - 2, bottom - 1, outline=color, width=width, tags=tags)
         canvas.create_oval(left + 6, top - 2, right + 3, bottom - 6, fill=canvas["bg"], outline=canvas["bg"], tags=tags)
+    elif name == "globe":
+        canvas.create_oval(left + 1, top + 1, right - 1, bottom - 1,
+                           outline=color, width=width, tags=tags)
+        canvas.create_oval(cx - size * 0.18, top + 1, cx + size * 0.18, bottom - 1,
+                           outline=color, width=width * 0.8, tags=tags)
+        _line(canvas, left + 3, cy, right - 3, cy, color=color, width=width * 0.8, tags=tags)
+        _line(canvas, left + 2, cy - size * 0.27, right - 2, cy - size * 0.27,
+              color=color, width=width * 0.7, tags=tags)
+        _line(canvas, left + 2, cy + size * 0.27, right - 2, cy + size * 0.27,
+              color=color, width=width * 0.7, tags=tags)
+    elif name == "chart":
+        base = bottom - 2
+        for offset, height in ((-7, 5), (-2, 9), (3, 7), (8, 12)):
+            left_x = cx + offset - 2
+            canvas.create_rectangle(left_x, base - height, left_x + 4, base,
+                                    fill=color, outline=color, tags=tags)
+        _line(canvas, left - 1, base + 2, right + 1, base + 2,
+              color=color, width=width, tags=tags)
     elif name == "refresh":
         canvas.create_arc(left + 2, top + 2, right - 2, bottom - 2, start=35, extent=285,
                           style="arc", outline=color, width=width, tags=tags)
