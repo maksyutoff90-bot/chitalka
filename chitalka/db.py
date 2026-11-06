@@ -50,6 +50,20 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     created_at  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_bookmarks_book ON bookmarks(book_id);
+CREATE TABLE IF NOT EXISTS annotations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    color        TEXT NOT NULL DEFAULT 'yellow',
+    start_block  INTEGER NOT NULL DEFAULT 0,
+    start_offset INTEGER NOT NULL DEFAULT 0,
+    end_block    INTEGER NOT NULL DEFAULT 0,
+    end_offset   INTEGER NOT NULL DEFAULT 0,
+    quote        TEXT NOT NULL DEFAULT '',
+    comment      TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_book ON annotations(book_id);
 CREATE TABLE IF NOT EXISTS folders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     path        TEXT NOT NULL UNIQUE,
@@ -350,6 +364,42 @@ class LibraryDB:
         self.conn.execute(
             "UPDATE bookmarks SET note=? WHERE id=?", (note, int(bookmark_id))
         )
+        self.conn.commit()
+
+    # ------------------------------------------------------------- заметки
+    def annotations(self, book_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM annotations WHERE book_id=? "
+            "ORDER BY start_block, start_offset, created_at",
+            (int(book_id),),
+        ).fetchall()
+
+    def add_annotation(self, book_id: int, color: str, start_block: int,
+                       start_offset: int, end_block: int, end_offset: int,
+                       quote: str, comment: str = "") -> int:
+        now = _now()
+        cur = self.conn.execute(
+            "INSERT INTO annotations (book_id, color, start_block, start_offset, "
+            "end_block, end_offset, quote, comment, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                int(book_id), color, int(start_block), int(start_offset),
+                int(end_block), int(end_offset), quote[:4000], comment[:8000],
+                now, now,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def update_annotation(self, annotation_id: int, color: str, comment: str) -> None:
+        self.conn.execute(
+            "UPDATE annotations SET color=?, comment=?, updated_at=? WHERE id=?",
+            (color, comment[:8000], _now(), int(annotation_id)),
+        )
+        self.conn.commit()
+
+    def delete_annotation(self, annotation_id: int) -> None:
+        self.conn.execute("DELETE FROM annotations WHERE id=?", (int(annotation_id),))
         self.conn.commit()
 
     # -------------------------------------------------------------- статистика

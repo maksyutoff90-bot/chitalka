@@ -137,6 +137,16 @@ def draw_icon(canvas: tk.Canvas, name: str, cx: float, cy: float, size: float,
     elif name == "moon":
         canvas.create_oval(left + 2, top + 1, right - 2, bottom - 1, outline=color, width=width, tags=tags)
         canvas.create_oval(left + 6, top - 2, right + 3, bottom - 6, fill=canvas["bg"], outline=canvas["bg"], tags=tags)
+    elif name == "note":
+        canvas.create_polygon(
+            left + 3, top + 1, right - 7, top + 1, right - 1, top + 7,
+            right - 1, bottom - 1, left + 3, bottom - 1,
+            outline=color, fill="", width=width, joinstyle="round", tags=tags,
+        )
+        _line(canvas, right - 7, top + 1, right - 7, top + 7, color=color, width=width, tags=tags)
+        _line(canvas, right - 7, top + 7, right - 1, top + 7, color=color, width=width, tags=tags)
+        for y in (top + 11, top + 14, top + 17):
+            _line(canvas, left + 6, y, right - 5, y, color=color, width=1, tags=tags)
     elif name == "globe":
         canvas.create_oval(left + 1, top + 1, right - 1, bottom - 1,
                            outline=color, width=width, tags=tags)

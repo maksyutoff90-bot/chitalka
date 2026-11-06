@@ -17,6 +17,7 @@ from .formats import load_document, parse_meta
 from .importer import Importer
 from .layout import LayoutStyle, layout_document
 from . import opds
+from . import dictionary
 
 
 def _say(message: str) -> None:
@@ -133,6 +134,11 @@ def run_selftest() -> int:
         if stats["today_seconds"] < 0 or "daily" not in stats or len(stats["daily"]) != 30:
             ok = False
             lines.append("ОШИБКА: статистика вернула некорректные данные")
+        if dictionary.detect_language("привет") != "ru" or dictionary.detect_language("hello") != "en":
+            ok = False
+            lines.append("ОШИБКА: определение языка")
+        else:
+            lines.append("Словарь/перевод: определение языка работает")
         for path in files:
             try:
                 meta = parse_meta(path)
@@ -226,6 +232,39 @@ def run_selftest() -> int:
                 lines.append(f"Читалка: страниц {pages}, элементов {len(reader.canvas.find_all())}")
                 if pages < 1:
                     ok = False
+                try:
+                    first = next(
+                        segment
+                        for page in reader.pages
+                        for line in page.lines
+                        for segment in line.segments
+                        if segment.block_index >= 0
+                    )
+                    source = reader.doc.blocks[first.block_index].text()
+                    exact = source[first.start:first.end]
+                    if exact != first.text:
+                        ok = False
+                        lines.append("ОШИБКА: смещения текста не совпадают")
+                    else:
+                        annotation_id = db.add_annotation(
+                            int(target["id"]), "green", first.block_index, first.start,
+                            first.block_index, first.end, first.text, "selftest",
+                        )
+                        reader._reload_annotations()
+                        reader._open_panel("notes")
+                        _pump(app, 0.5)
+                        if reader.panel_name != "notes":
+                            ok = False
+                            lines.append("ОШИБКА: панель заметок не открылась")
+                        else:
+                            lines.append("Заметки и выделения: панель открыта")
+                        reader._close_panel()
+                        db.delete_annotation(annotation_id)
+                        reader._reload_annotations()
+                        _pump(app, 0.3)
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА заметок: {exc}")
                 reader.next_page()
                 _pump(app, 0.2)
                 reader._open_panel("toc")

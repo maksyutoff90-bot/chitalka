@@ -7,8 +7,9 @@ import time
 import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
+from datetime import date
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
@@ -21,6 +22,14 @@ from ..layout import LayoutResult, LayoutStyle, layout_document
 from ..theme import Palette, READING_THEMES, ReadingTheme, reading_theme
 from ..winutil import is_foreground
 from .icons import draw_icon
+from .lookup import LookupWindow
+from .notes import (
+    NOTE_COLOR_LABELS,
+    ColorPopup,
+    NoteDialog,
+    SelectionToolbar,
+    note_color,
+)
 from .widgets import (
     IconButton,
     PillButton,
@@ -104,6 +113,13 @@ class ReaderWindow(tk.Toplevel):
         self._session_pages = 0
         self._last_tick = time.monotonic()
         self._last_activity = time.monotonic()
+        self.annotations: list = []
+        self.selection: dict | None = None
+        self._sel_anchor: tuple[int, int] | None = None
+        self._press_xy: tuple[int, int] | None = None
+        self._selection_dragged = False
+        self._selection_toolbar: SelectionToolbar | None = None
+        self._lookup_window: LookupWindow | None = None
 
         self.title(f"{row['title']} — {APP_NAME}")
         self.configure(bg=palette.bg)
@@ -170,6 +186,7 @@ class ReaderWindow(tk.Toplevel):
             ("fullscreen", "fullscreen", "Во весь экран (F11)", self.toggle_fullscreen),
             ("settings", "type", "Оформление текста", lambda: self._open_panel("settings")),
             ("search", "search", "Поиск по книге (Ctrl+F)", lambda: self._open_panel("search")),
+            ("notes", "note", "Заметки и выделения", lambda: self._open_panel("notes")),
             ("bookmarks", "bookmark", "Закладки (Ctrl+B)", lambda: self._open_panel("bookmarks")),
             ("toc", "toc", "Содержание (Ctrl+T)", lambda: self._open_panel("toc")),
         ):
@@ -190,7 +207,9 @@ class ReaderWindow(tk.Toplevel):
                                 font=(SERIF, 12))
         self.loading.place(relx=0.5, rely=0.5, anchor="center")
         self.canvas.bind("<Configure>", self._on_resize)
-        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<ButtonPress-1>", self._on_selection_press)
+        self.canvas.bind("<B1-Motion>", self._on_selection_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._on_selection_release)
         self.canvas.bind("<Button-3>", self._context_menu)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.canvas.bind("<Button-4>", lambda e: self.prev_page())
@@ -234,6 +253,10 @@ class ReaderWindow(tk.Toplevel):
             self.update_idletasks()
             doc = load_document(self.path)
             self.doc = doc
+            try:
+                self.annotations = self.db.annotations(self.book_id)
+            except Exception:
+                self.annotations = []
             self.title(f"{doc.title} — {APP_NAME}")
             self.book_label.configure(text=ellipsis(doc.title, 62))
             if doc.format == "pdf":
@@ -413,6 +436,9 @@ class ReaderWindow(tk.Toplevel):
                                     text=f"{percent:.0f}%", anchor="ne",
                                     fill=theme.muted, font=(UI, 7))
 
+        self._draw_annotation_backgrounds(page, g, tx, ty, theme)
+        self._draw_selection()
+
         for image in page.images:
             photo = self._photo_for(image)
             if photo is not None:
@@ -454,6 +480,7 @@ class ReaderWindow(tk.Toplevel):
             x1 = tx + (g["text_w"] - rule.width) / 2
             self.canvas.create_line(x1, ty + rule.y, x1 + rule.width, ty + rule.y,
                                     fill=theme.rule, width=rule.thickness)
+        self._draw_annotation_markers(page, g, tx, ty, theme)
 
     def _photo_for(self, image) -> ImageTk.PhotoImage | None:
         key = (image.path, int(image.width), int(image.height))
@@ -586,6 +613,368 @@ class ReaderWindow(tk.Toplevel):
         self._save_session()
         self.session_id = None
 
+    # ------------------------------------------------------------- выделение
+    def _on_selection_press(self, event) -> None:
+        self.canvas.focus_set()
+        self._press_xy = (event.x, event.y)
+        self._selection_dragged = False
+        self._sel_anchor = None
+        if self.selection:
+            self._clear_selection()
+        if self.is_pdf:
+            return
+        self._sel_anchor = self._hit_test(event.x, event.y)
+
+    def _on_selection_motion(self, event) -> None:
+        if self.is_pdf or not self._sel_anchor or self._press_xy is None:
+            return
+        dx = event.x - self._press_xy[0]
+        dy = event.y - self._press_xy[1]
+        if not self._selection_dragged and abs(dx) + abs(dy) < 4:
+            return
+        position = self._hit_test(event.x, event.y)
+        if position is None:
+            return
+        selection = self._make_selection(self._sel_anchor, position)
+        if selection is None:
+            self._clear_selection()
+            return
+        self._selection_dragged = True
+        self.selection = selection
+        self._render_text()
+
+    def _on_selection_release(self, event) -> None:
+        self._selection_point = (event.x_root, event.y_root)
+        if self._selection_dragged and self.selection:
+            self._show_selection_toolbar(event.x_root, event.y_root)
+            self._selection_dragged = False
+            self._sel_anchor = None
+            return
+        self._selection_dragged = False
+        self._sel_anchor = None
+        self._on_canvas_click(event)
+
+    def _hit_test(self, x: float, y: float) -> tuple[int, int] | None:
+        if self.is_pdf or not self.result or not self.pages:
+            return None
+        g = self._page_geom
+        if not g:
+            return None
+        lx = x - g["text_x"]
+        ly = y - g["text_y"]
+        if lx < -4 or lx > g["text_w"] + 4 or ly < -4 or ly > g["text_h"] + 4:
+            return None
+        page = self.pages[self.page_index]
+        if not page.lines:
+            return None
+        line = min(
+            page.lines,
+            key=lambda item: 0
+            if item.y <= ly <= item.y + item.height
+            else min(abs(ly - item.y), abs(ly - (item.y + item.height))),
+        )
+        if not line.segments:
+            return None
+        fonts = self.result.fonts
+        nearest = None
+        for segment in line.segments:
+            left = segment.x
+            right = segment.x + segment.width
+            if left - 2 <= lx <= right + 2:
+                offset = segment.start + self._char_offset(segment, lx, fonts)
+                return (segment.block_index, offset)
+            distance = min(abs(lx - left), abs(lx - right))
+            if nearest is None or distance < nearest[0]:
+                offset = segment.start if lx < left else segment.end
+                nearest = (distance, segment.block_index, offset)
+        if nearest is not None:
+            return (nearest[1], nearest[2])
+        return None
+
+    def _char_offset(self, segment, lx: float, fonts) -> int:
+        text = segment.text
+        if lx <= segment.x:
+            return 0
+        cursor = segment.x
+        for index, char in enumerate(text):
+            width = fonts.width(segment.key, char)
+            if lx < cursor + width / 2:
+                return index
+            cursor += width
+        return len(text)
+
+    def _make_selection(self, start: tuple[int, int],
+                        end: tuple[int, int]) -> dict | None:
+        if start == end:
+            return None
+        if start > end:
+            start, end = end, start
+        quote = self._quote_between(start[0], start[1], end[0], end[1])
+        if not quote.strip():
+            return None
+        return {
+            "start_block": start[0], "start_offset": start[1],
+            "end_block": end[0], "end_offset": end[1],
+            "quote": quote[:4000],
+        }
+
+    def _quote_between(self, start_block: int, start_offset: int,
+                       end_block: int, end_offset: int) -> str:
+        if not self.doc:
+            return ""
+        blocks = self.doc.blocks
+        if start_block < 0 or end_block >= len(blocks):
+            return ""
+        if start_block == end_block:
+            text = blocks[start_block].text()[start_offset:end_offset]
+        else:
+            parts = [blocks[start_block].text()[start_offset:]]
+            for index in range(start_block + 1, end_block):
+                parts.append(blocks[index].text())
+            parts.append(blocks[end_block].text()[:end_offset])
+            text = "\n".join(parts)
+        return text.replace("\u2028", "\n").replace("\n\n", "\n").strip()
+
+    def _segment_span(self, segment, start_block: int, start_offset: int,
+                      end_block: int, end_offset: int, fonts) -> tuple[float, float] | None:
+        block = segment.block_index
+        if block < start_block or block > end_block:
+            return None
+        if start_block == end_block == block:
+            left = max(start_offset, segment.start)
+            right = min(end_offset, segment.end)
+        elif block == start_block:
+            left = max(start_offset, segment.start)
+            right = segment.end
+        elif block == end_block:
+            left = segment.start
+            right = min(end_offset, segment.end)
+        else:
+            left = segment.start
+            right = segment.end
+        if left >= right:
+            return None
+        local_left = max(0, min(len(segment.text), left - segment.start))
+        local_right = max(0, min(len(segment.text), right - segment.start))
+        if local_right <= local_left:
+            return None
+        x1 = fonts.width(segment.key, segment.text[:local_left])
+        x2 = fonts.width(segment.key, segment.text[:local_right])
+        return (x1, x2)
+
+    def _draw_selection(self) -> None:
+        self.canvas.delete("selection")
+        if not self.selection or self.is_pdf or not self.result or not self.pages:
+            return
+        theme = reading_theme(self.settings.reader_theme)
+        g = self._page_geom
+        if not g:
+            return
+        fonts = self.result.fonts
+        selection = self.selection
+        page = self.pages[self.page_index]
+        fill = "#31465a" if theme.is_dark else "#cfe2f3"
+        for line in page.lines:
+            for segment in line.segments:
+                span = self._segment_span(
+                    segment, selection["start_block"], selection["start_offset"],
+                    selection["end_block"], selection["end_offset"], fonts,
+                )
+                if span is None:
+                    continue
+                x1, x2 = span
+                self.canvas.create_rectangle(
+                    g["text_x"] + segment.x + x1, g["text_y"] + line.y + 2,
+                    g["text_x"] + segment.x + x2, g["text_y"] + line.y + line.height - 1,
+                    fill=fill, outline="", tags=("selection",),
+                )
+
+    def _show_selection_toolbar(self, x_root: int, y_root: int) -> None:
+        if self._selection_toolbar is not None:
+            try:
+                self._selection_toolbar.destroy()
+            except tk.TclError:
+                pass
+        self._selection_toolbar = SelectionToolbar(
+            self, self.palette, self._selection_action
+        )
+        self._selection_toolbar.show_at(x_root, y_root)
+
+    def _hide_selection_toolbar(self) -> None:
+        if self._selection_toolbar is not None:
+            try:
+                self._selection_toolbar.destroy()
+            except tk.TclError:
+                pass
+            self._selection_toolbar = None
+
+    def _clear_selection(self) -> None:
+        self.selection = None
+        try:
+            self.canvas.delete("selection")
+        except tk.TclError:
+            pass
+        self._hide_selection_toolbar()
+
+    def _selection_action(self, action: str) -> None:
+        if not self.selection:
+            return
+        if action in ("dict", "translate"):
+            self._open_lookup(action)
+        elif action == "highlight":
+            self._quick_highlight()
+        elif action == "note":
+            self._note_from_selection()
+        elif action == "copy":
+            self._copy_selection()
+        self._hide_selection_toolbar()
+
+    def _open_lookup(self, mode: str) -> None:
+        if not self.selection:
+            self._flash("Сначала выделите текст")
+            return
+        if self._lookup_window is not None:
+            try:
+                if self._lookup_window.winfo_exists():
+                    self._lookup_window.lift()
+                    return
+            except tk.TclError:
+                self._lookup_window = None
+        self._lookup_window = LookupWindow(
+            self, self.palette, self.selection["quote"], mode=mode,
+            on_close=lambda: setattr(self, "_lookup_window", None),
+        )
+
+    def _quick_highlight(self) -> None:
+        if not self.selection:
+            return
+        x, y = getattr(self, "_selection_point", (self.winfo_rootx() + 100,
+                                                  self.winfo_rooty() + 100))
+        popup = ColorPopup(self, self.palette, x, y)
+        self.wait_window(popup)
+        if popup.result:
+            self._add_annotation(popup.result, "")
+
+    def _note_from_selection(self) -> None:
+        if not self.selection:
+            return
+        dialog = NoteDialog(self, self.palette, self.selection["quote"])
+        self.wait_window(dialog)
+        if dialog.result:
+            color, comment = dialog.result
+            self._add_annotation(color, comment)
+
+    def _add_annotation(self, color: str, comment: str) -> None:
+        if not self.selection:
+            return
+        selection = self.selection
+        try:
+            self.db.add_annotation(
+                self.book_id, color, selection["start_block"], selection["start_offset"],
+                selection["end_block"], selection["end_offset"], selection["quote"], comment,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Заметка", str(exc), parent=self)
+            return
+        self._reload_annotations()
+        self._clear_selection()
+        self._flash("Заметка добавлена")
+
+    def _edit_annotation(self, annotation) -> None:
+        dialog = NoteDialog(
+            self, self.palette, annotation["quote"],
+            color=annotation["color"], comment=annotation["comment"],
+            title="Редактировать заметку",
+        )
+        self.wait_window(dialog)
+        if dialog.result:
+            color, comment = dialog.result
+            self.db.update_annotation(int(annotation["id"]), color, comment)
+            self._reload_annotations()
+
+    def _delete_annotation(self, annotation) -> None:
+        if not messagebox.askyesno(
+            "Удалить заметку", "Удалить эту заметку вместе с выделением?", parent=self
+        ):
+            return
+        self.db.delete_annotation(int(annotation["id"]))
+        self._reload_annotations()
+
+    def _reload_annotations(self) -> None:
+        try:
+            self.annotations = self.db.annotations(self.book_id)
+        except Exception:
+            self.annotations = []
+        if self.pages and not self.is_pdf:
+            self._render_text()
+        if self.panel_name == "notes":
+            self._populate_notes()
+        self._save_session()
+
+    def _draw_annotation_backgrounds(self, page, g, tx, ty, theme) -> None:
+        if not self.annotations or not self.result:
+            return
+        fonts = self.result.fonts
+        for annotation in self.annotations:
+            color = note_color(str(annotation["color"]), theme.is_dark)
+            for line in page.lines:
+                for segment in line.segments:
+                    span = self._segment_span(
+                        segment, int(annotation["start_block"]),
+                        int(annotation["start_offset"]),
+                        int(annotation["end_block"]),
+                        int(annotation["end_offset"]), fonts,
+                    )
+                    if span is None:
+                        continue
+                    x1, x2 = span
+                    self.canvas.create_rectangle(
+                        tx + segment.x + x1, ty + line.y + 2,
+                        tx + segment.x + x2, ty + line.y + line.height - 1,
+                        fill=color, outline="", tags=("annotation",),
+                    )
+
+    def _draw_annotation_markers(self, page, g, tx, ty, theme) -> None:
+        if not self.annotations or not self.result:
+            return
+        fonts = self.result.fonts
+        for annotation in self.annotations:
+            block = int(annotation["start_block"])
+            offset = int(annotation["start_offset"])
+            for line in page.lines:
+                for segment in line.segments:
+                    if segment.block_index != block:
+                        continue
+                    if not (segment.start <= offset <= segment.end):
+                        continue
+                    fill = note_color(str(annotation["color"]), theme.is_dark)
+                    local = max(0, min(len(segment.text), offset - segment.start))
+                    marker_x = tx + segment.x + fonts.width(segment.key, segment.text[:local])
+                    marker_y = ty + line.y + line.height / 2
+                    tag = f"ann:{annotation['id']}"
+                    self.canvas.create_oval(
+                        marker_x - 10, marker_y - 4, marker_x - 2, marker_y + 4,
+                        fill=fill, outline=theme.rule, tags=("annotation_marker", tag),
+                    )
+                    self.canvas.tag_bind(
+                        tag, "<Button-1>",
+                        lambda _e: self._open_panel("notes"),
+                    )
+                    break
+                else:
+                    continue
+                break
+
+    def _copy_selection(self) -> None:
+        if not self.selection:
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self.selection["quote"])
+            self._flash("Выделенный текст скопирован")
+        except tk.TclError:
+            pass
+
     # ------------------------------------------------------------------ навигация
     def _on_slider(self, value: float) -> None:
         total = self._total_pages()
@@ -606,6 +995,7 @@ class ReaderWindow(tk.Toplevel):
                 self.history.pop(0)
         if index == self.page_index and self._ready:
             return
+        self._clear_selection()
         changed = index != self.page_index
         self.page_index = index
         if changed:
@@ -654,6 +1044,8 @@ class ReaderWindow(tk.Toplevel):
             tags = self.canvas.gettags(current[0])
             if any(tag.startswith("link:") for tag in tags):
                 return
+            if "annotation_marker" in tags:
+                return
         width = max(1, self.canvas.winfo_width())
         if event.x < width * 0.24:
             self.prev_page()
@@ -661,6 +1053,9 @@ class ReaderWindow(tk.Toplevel):
             self.next_page()
 
     def _on_escape(self, _event=None) -> None:
+        if self.selection:
+            self._clear_selection()
+            return
         if self.fullscreen:
             self.toggle_fullscreen()
         elif self.panel:
@@ -836,6 +1231,7 @@ class ReaderWindow(tk.Toplevel):
         titles = {
             "toc": "Содержание", "bookmarks": "Закладки",
             "search": "Поиск по книге", "settings": "Оформление",
+            "notes": "Заметки и выделения",
         }
         tk.Label(header, text=titles.get(name, ""), bg=palette.panel, fg=palette.text,
                  font=(SERIF, 14, "bold")).pack(side="left", padx=18, pady=14)
@@ -848,6 +1244,8 @@ class ReaderWindow(tk.Toplevel):
             self._populate_toc()
         elif name == "bookmarks":
             self._build_bookmarks(body)
+        elif name == "notes":
+            self._build_notes(body)
         elif name == "search":
             self._build_search(body)
         elif name == "settings":
@@ -1016,6 +1414,154 @@ class ReaderWindow(tk.Toplevel):
         else:
             page = 0
         self.go_to_page(page, add_history=True)
+
+    # ------------------------------------------------------------------ заметки
+    def _build_notes(self, body: tk.Frame) -> None:
+        palette = self.palette
+        top = tk.Frame(body, bg=palette.panel)
+        top.pack(fill="x", padx=16, pady=(0, 8))
+        PillButton(top, palette, "Экспорт в Markdown", self._export_notes,
+                   kind="soft", height=34, font_size=8,
+                   bg=palette.panel).pack(fill="x")
+        tk.Label(
+            body, text="Выделите текст в книге, чтобы добавить маркер или заметку.",
+            bg=palette.panel, fg=palette.dim, font=(UI, 8), justify="left",
+            wraplength=300, anchor="w",
+        ).pack(fill="x", padx=18, pady=(0, 6))
+        self.notes_body = tk.Frame(body, bg=palette.panel)
+        self.notes_body.pack(fill="both", expand=True)
+        self._populate_notes()
+
+    def _populate_notes(self) -> None:
+        if not hasattr(self, "notes_body") or not self.notes_body.winfo_exists():
+            return
+        for child in self.notes_body.winfo_children():
+            child.destroy()
+        palette = self.palette
+        if self.is_pdf:
+            tk.Label(
+                self.notes_body,
+                text="В PDF выделение текста пока не поддерживается.\n"
+                     "Заметки доступны для FB2, EPUB и TXT.",
+                bg=palette.panel, fg=palette.muted, font=(UI, 9),
+                justify="center",
+            ).pack(pady=30)
+            return
+        if not self.annotations:
+            tk.Label(
+                self.notes_body,
+                text="Пока нет заметок.\nВыделите фрагмент и выберите «Заметка».",
+                bg=palette.panel, fg=palette.muted, font=(UI, 9),
+                justify="center",
+            ).pack(pady=30)
+            return
+        scroll = ScrollFrame(self.notes_body, palette, bg=palette.panel)
+        scroll.pack(fill="both", expand=True)
+        for annotation in self.annotations:
+            block = int(annotation["start_block"])
+            page = self.result.page_for_block(block) + 1 if self.result else 0
+            chapter = self.result.chapter_for_block(block) if self.result else ""
+            row = tk.Frame(scroll.inner, bg=palette.panel, cursor="hand2")
+            row.pack(fill="x", pady=2)
+            swatch = tk.Canvas(row, width=5, height=74, bg=palette.panel,
+                               highlightthickness=0, bd=0)
+            swatch.pack(side="left", fill="y", padx=(3, 8))
+            swatch.create_rectangle(
+                0, 2, 5, 72, fill=note_color(str(annotation["color"])), outline=""
+            )
+            text_box = tk.Frame(row, bg=palette.panel)
+            text_box.pack(side="left", fill="x", expand=True, pady=7)
+            quote = " ".join(str(annotation["quote"]).split())
+            quote_label = tk.Label(
+                text_box, text=ellipsis(quote, 64), bg=palette.panel, fg=palette.text,
+                font=(SERIF, 9, "bold"), anchor="w", justify="left",
+                wraplength=220,
+            )
+            quote_label.pack(fill="x")
+            comment = " ".join(str(annotation["comment"] or "").split())
+            comment_label = None
+            if comment:
+                comment_label = tk.Label(
+                    text_box, text=ellipsis(comment, 80), bg=palette.panel,
+                    fg=palette.muted, font=(UI, 8), anchor="w", justify="left",
+                    wraplength=220,
+                )
+                comment_label.pack(fill="x")
+            meta = f"{chapter or 'Без главы'}  ·  стр. {page}"
+            meta_label = tk.Label(
+                text_box, text=ellipsis(meta, 44), bg=palette.panel, fg=palette.dim,
+                font=(UI, 7), anchor="w",
+            )
+            meta_label.pack(fill="x", pady=(2, 0))
+            IconButton(row, palette, "trash",
+                       lambda a=annotation: self._delete_annotation(a),
+                       size=26, bg=palette.panel, tooltip="Удалить").pack(
+                side="right", padx=(0, 2)
+            )
+            IconButton(row, palette, "note",
+                       lambda a=annotation: self._edit_annotation(a),
+                       size=26, bg=palette.panel, tooltip="Изменить").pack(
+                side="right", padx=0
+            )
+            for widget in (row, text_box, quote_label, meta_label):
+                widget.bind("<Button-1>", lambda _e, b=block: self._jump_to_block(b))
+            if comment_label is not None:
+                comment_label.bind(
+                    "<Button-1>", lambda _e, b=block: self._jump_to_block(b)
+                )
+
+    def _jump_to_block(self, block: int) -> None:
+        self._close_panel()
+        if not self.result:
+            return
+        page = self.result.page_for_block(block)
+        self.go_to_page(page, add_history=True)
+
+    def _export_notes(self) -> None:
+        if not self.annotations:
+            messagebox.showinfo("Экспорт заметок", "В этой книге пока нет заметок.",
+                                parent=self)
+            return
+        safe_title = "".join(
+            char if char not in '<>:"/\\|?*' else " " for char in self.doc.title
+        ).strip()[:60]
+        target = filedialog.asksaveasfilename(
+            parent=self, title="Экспорт заметок в Markdown",
+            defaultextension=".md", initialfile=f"Заметки — {safe_title}.md",
+            filetypes=[("Markdown", "*.md"), ("Текст", "*.txt")],
+        )
+        if not target:
+            return
+        lines = [
+            f"# Заметки — «{self.doc.title}»",
+            "",
+        ]
+        if self.doc.author:
+            lines += [f"**Автор:** {self.doc.author}", ""]
+        lines += [f"*Экспорт: {date.today():%d.%m.%Y}*", ""]
+        current_chapter = None
+        for annotation in self.annotations:
+            block = int(annotation["start_block"])
+            chapter = self.result.chapter_for_block(block) if self.result else ""
+            page = self.result.page_for_block(block) + 1 if self.result else 0
+            if chapter and chapter != current_chapter:
+                lines += [f"## {chapter}", ""]
+                current_chapter = chapter
+            color = NOTE_COLOR_LABELS.get(str(annotation["color"]), "Маркер")
+            lines += [f"*Страница {page} · {color}*", ""]
+            quote = str(annotation["quote"]).strip().replace("\n", "\n> ")
+            lines += ["> " + quote, ""]
+            comment = str(annotation["comment"] or "").strip()
+            if comment:
+                lines += [comment, ""]
+            lines += ["---", ""]
+        try:
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines))
+        except OSError as exc:
+            messagebox.showerror("Экспорт заметок", str(exc), parent=self)
+            return
+        self._flash(f"Заметки сохранены: {Path(target).name}")
 
     # ------------------------------------------------------------------ поиск
     def _build_search(self, body: tk.Frame) -> None:
@@ -1317,13 +1863,15 @@ class ReaderWindow(tk.Toplevel):
         return "\n".join(lines)
 
     def _copy_page(self) -> None:
-        text = self._page_text().strip()
+        text = (self.selection or {}).get("quote", "").strip()
+        if not text:
+            text = self._page_text().strip()
         if not text:
             return
         try:
             self.clipboard_clear()
             self.clipboard_append(text)
-            self._flash("Страница скопирована")
+            self._flash("Скопировано")
         except tk.TclError:
             pass
 
@@ -1333,9 +1881,17 @@ class ReaderWindow(tk.Toplevel):
             activebackground=self.palette.accent_soft, activeforeground=self.palette.accent,
             bd=0, relief="flat", font=(UI, 9),
         )
+        if self.selection:
+            menu.add_command(label="Словарь", command=lambda: self._open_lookup("dict"))
+            menu.add_command(label="Перевод", command=lambda: self._open_lookup("translate"))
+            menu.add_command(label="Выделить маркером", command=self._quick_highlight)
+            menu.add_command(label="Заметка к выделению", command=self._note_from_selection)
+            menu.add_command(label="Копировать выделенное", command=self._copy_selection)
+            menu.add_separator()
         menu.add_command(label="Скопировать страницу", command=self._copy_page)
         menu.add_command(label="Добавить закладку", command=self._add_bookmark)
         menu.add_separator()
+        menu.add_command(label="Заметки и выделения", command=lambda: self._open_panel("notes"))
         menu.add_command(label="Содержание", command=lambda: self._open_panel("toc"))
         menu.add_command(label="Оформление", command=lambda: self._open_panel("settings"))
         menu.tk_popup(event.x_root, event.y_root)

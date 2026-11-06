@@ -37,6 +37,9 @@ class Segment:
     strike: bool = False
     dy: float = 0.0
     width: float = 0.0
+    block_index: int = -1
+    start: int = 0
+    end: int = 0
 
 
 @dataclass
@@ -195,6 +198,9 @@ class _Word:
     sup: bool = False
     sub: bool = False
     space_before: int = 0
+    block_index: int = -1
+    start: int = 0
+    end: int = 0
 
 
 @dataclass
@@ -212,8 +218,9 @@ def _run_key(block: Block, run) -> tuple:
     )
 
 
-def _tokenize(block: Block, fonts: FontSet) -> list:
+def _tokenize(block: Block, fonts: FontSet, block_index: int) -> list:
     tokens: list = []
+    position = 0
     for run in block.runs:
         text = run.text
         if not text:
@@ -223,6 +230,8 @@ def _tokenize(block: Block, fonts: FontSet) -> list:
         for part in parts:
             if not part:
                 continue
+            start = position
+            position += len(part)
             if "\u2028" in part or "\n" in part:
                 tokens.append(_BREAK)
                 continue
@@ -239,6 +248,9 @@ def _tokenize(block: Block, fonts: FontSet) -> list:
                     strike=run.strike,
                     sup=run.sup,
                     sub=run.sub,
+                    block_index=block_index,
+                    start=start,
+                    end=position,
                 )
             )
     return tokens
@@ -252,13 +264,25 @@ def _split_long_word(word: _Word, fonts: FontSet, max_width: int) -> list[_Word]
         probe = current + char
         if current and fonts.width(word.key, probe) > max_width:
             pieces.append(_Word(current, word.key, fonts.width(word.key, current),
-                               word.link, word.underline, word.strike, word.sup, word.sub))
+                               word.link, word.underline, word.strike, word.sup, word.sub,
+                               block_index=word.block_index,
+                               start=word.start + len(current),
+                               end=word.start + len(current)))
             current = char
         else:
             current = probe
     if current:
         pieces.append(_Word(current, word.key, fonts.width(word.key, current),
-                           word.link, word.underline, word.strike, word.sup, word.sub))
+                           word.link, word.underline, word.strike, word.sup, word.sub,
+                           block_index=word.block_index,
+                           start=word.start + len(word.text) - len(current),
+                           end=word.end))
+    # Пересчитываем границы кусков последовательно.
+    cursor = word.start
+    for piece in pieces:
+        piece.start = cursor
+        cursor += len(piece.text)
+        piece.end = cursor
     return pieces
 
 
@@ -323,6 +347,9 @@ def _make_line(words: list[_Word], align: str, avail: float, indent: float,
                 strike=word.strike,
                 dy=round(dy, 2),
                 width=word.width,
+                block_index=word.block_index,
+                start=word.start,
+                end=word.end,
             )
         )
         text_parts.append(word.text)
@@ -397,7 +424,7 @@ def layout_document(document: Document, style: LayoutStyle, root) -> LayoutResul
 
         indent, first_indent, align, _ = _block_geometry(block, style)
         justify = (align == "justify") and style.justify
-        tokens = _tokenize(block, fonts)
+        tokens = _tokenize(block, fonts, block_index)
         if not tokens:
             y += margin_after
             continue
