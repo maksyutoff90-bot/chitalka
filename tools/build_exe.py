@@ -66,6 +66,15 @@ def main() -> int:
         target_shots.mkdir(parents=True, exist_ok=True)
         for shot in shots.glob("*.png"):
             shutil.copy2(shot, target_shots / shot.name)
+    dictionaries = ROOT / "data" / "dictionaries"
+    if dictionaries.exists():
+        target_dict = data / "dictionaries"
+        target_dict.mkdir(parents=True, exist_ok=True)
+        for name in ("freedict.sqlite.xz", "README.txt", "COPYING",
+                     "LICENSE-CC-BY-SA.txt"):
+            source = dictionaries / name
+            if source.exists():
+                shutil.copy2(source, target_dict / name)
     if (ROOT / "README.md").exists():
         shutil.copy2(ROOT / "README.md", DIST / "README.md")
     print(f"Готово: {DIST / 'Chitalka.exe'}")

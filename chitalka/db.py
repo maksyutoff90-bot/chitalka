@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS catalogs (
     url         TEXT NOT NULL UNIQUE,
     added_at    TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS lookup_cache (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT ''
+);
 """
 
 BOOK_FIELDS = (
@@ -430,6 +435,34 @@ class LibraryDB:
 
     def delete_annotation(self, annotation_id: int) -> None:
         self.conn.execute("DELETE FROM annotations WHERE id=?", (int(annotation_id),))
+        self.conn.commit()
+
+    # ---------------------------------------------------------- кэш словаря
+    def cache_get(self, key: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT value FROM lookup_cache WHERE key=?", (str(key),)
+        ).fetchone()
+        return str(row["value"]) if row else None
+
+    def cache_set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO lookup_cache(key, value, created_at) VALUES(?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "created_at=excluded.created_at",
+            (str(key), str(value)[:100000], _now()),
+        )
+        self.conn.commit()
+
+    def cache_count(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) AS count FROM lookup_cache").fetchone()
+        return int(row["count"]) if row else 0
+
+    def cache_delete(self, key: str) -> None:
+        self.conn.execute("DELETE FROM lookup_cache WHERE key=?", (str(key),))
+        self.conn.commit()
+
+    def cache_clear(self) -> None:
+        self.conn.execute("DELETE FROM lookup_cache")
         self.conn.commit()
 
     # -------------------------------------------------------------- статистика

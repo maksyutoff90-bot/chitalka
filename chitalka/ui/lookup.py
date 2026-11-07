@@ -19,12 +19,14 @@ SERIF = "Georgia"
 
 class LookupWindow(tk.Toplevel):
     def __init__(self, master, palette: Palette, text: str, *,
-                 mode: str = "both", on_close: Callable | None = None) -> None:
+                 mode: str = "both", on_close: Callable | None = None,
+                 cache=None) -> None:
         super().__init__(master)
         self.palette = palette
         self.text = " ".join((text or "").split())
         self.source, self.target = dictionary.source_pair(self.text)
         self.mode = mode
+        self.cache = cache
         self.queue: queue.Queue = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.closed = False
@@ -35,8 +37,8 @@ class LookupWindow(tk.Toplevel):
         self.on_close_cb = on_close
         self.title("Словарь и перевод")
         self.configure(bg=palette.panel)
-        self.minsize(520, 520)
-        self.geometry("620x640")
+        self.minsize(520, 560)
+        self.geometry("620x680")
         self.transient(master)
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -90,8 +92,19 @@ class LookupWindow(tk.Toplevel):
         PillButton(actions, palette, "Открыть в браузере", self._open_browser,
                    kind="ghost", height=30, font_size=8, bg=palette.panel).pack(side="right")
 
+        self.footer = tk.Label(self, text="Офлайн-словарь FreeDict", bg=palette.panel,
+                               fg=palette.dim, font=(UI, 7), anchor="w")
+        self.footer.pack(side="bottom", fill="x", padx=20, pady=(0, 10))
+        if self.cache is not None:
+            try:
+                self.footer.configure(
+                    text=f"Офлайн-словарь FreeDict · кэш: {self.cache.cache_count()}"
+                )
+            except Exception:
+                pass
+
         dict_box = tk.Frame(self, bg=palette.panel)
-        dict_box.pack(fill="both", expand=True, padx=20, pady=(4, 14))
+        dict_box.pack(fill="both", expand=True, padx=20, pady=(4, 4))
         head = tk.Frame(dict_box, bg=palette.panel)
         head.pack(fill="x")
         self.dict_title = tk.Label(head, text="СЛОВАРЬ", bg=palette.panel,
@@ -114,10 +127,6 @@ class LookupWindow(tk.Toplevel):
         self.dict_text.pack(side="left", fill="both", expand=True)
         self.dict_text.configure(state="disabled")
 
-        self.footer = tk.Label(self, text="", bg=palette.panel, fg=palette.dim,
-                               font=(UI, 7), anchor="w")
-        self.footer.pack(fill="x", padx=20, pady=(0, 10))
-
     def _update_lang(self) -> None:
         self.lang_label.configure(
             text=f"{dictionary.language_name(self.source)} → "
@@ -136,19 +145,24 @@ class LookupWindow(tk.Toplevel):
         self._request_id += 1
         request = self._request_id
 
-        def worker() -> None:
+        def translation_worker() -> None:
             try:
-                value = dictionary.translate(text, source, target)
+                value = dictionary.translate(
+                    text, source, target, cache=self.cache, with_source=True
+                )
                 self.queue.put(("translation", value, "", request))
             except Exception as exc:  # noqa: BLE001
                 self.queue.put(("translation", "", str(exc), request))
+
+        def dictionary_worker() -> None:
             try:
-                value = dictionary.lookup(text, source)
+                value = dictionary.lookup(text, source, cache=self.cache)
                 self.queue.put(("dictionary", value, "", request))
             except Exception as exc:  # noqa: BLE001
                 self.queue.put(("dictionary", None, str(exc), request))
 
-        self.executor.submit(worker)
+        self.executor.submit(translation_worker)
+        self.executor.submit(dictionary_worker)
 
     def _swap(self) -> None:
         self.source, self.target = self.target, self.source
@@ -170,7 +184,8 @@ class LookupWindow(tk.Toplevel):
             for line in definitions:
                 self.dict_text.insert("end", line + "\n\n")
         self.dict_text.configure(state="disabled")
-        self.dict_status.configure(text=status)
+        if status:
+            self.dict_status.configure(text=status)
 
     def _poll(self) -> None:
         if self.closed:
@@ -185,7 +200,11 @@ class LookupWindow(tk.Toplevel):
                         self._set_translation("", "Ошибка")
                         self.trans_status.configure(text=error[:60])
                     else:
-                        self._set_translation(value, "готово")
+                        if isinstance(value, tuple):
+                            translation, origin = value
+                        else:
+                            translation, origin = value, "готово"
+                        self._set_translation(translation, origin)
                 elif kind == "dictionary":
                     if error or not value:
                         self._set_dictionary([
@@ -199,10 +218,19 @@ class LookupWindow(tk.Toplevel):
                         self.dict_title.configure(
                             text=f"СЛОВАРЬ · {value.get('word', '')}".upper()
                         )
+                        source = str(value.get("source") or "словарь")
+                        phonetic = str(value.get("phonetic") or "")
                         self.dict_status.configure(
-                            text=value.get("phonetic") or "Wiktionary"
+                            text=f"{phonetic} · {source}" if phonetic else source
                         )
                         self._set_dictionary(value.get("definitions") or [], "")
+                        if self.cache is not None:
+                            try:
+                                self.footer.configure(
+                                    text=f"Офлайн-словарь FreeDict · кэш: {self.cache.cache_count()}"
+                                )
+                            except Exception:
+                                pass
         except queue.Empty:
             pass
         self._poll_job = self.after(120, self._poll)

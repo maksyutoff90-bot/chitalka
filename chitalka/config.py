@@ -44,6 +44,7 @@ def _is_writable(path: Path) -> bool:
 
 
 ROOT_DIR = _base_dir()
+BUNDLED_DICT_ARCHIVE = ROOT_DIR / "data" / "dictionaries" / "freedict.sqlite.xz"
 DATA_DIR = ROOT_DIR / "data"
 if not _is_writable(DATA_DIR):
     DATA_DIR = _fallback_dir()
@@ -53,11 +54,14 @@ BOOKS_DIR = DATA_DIR / "books"
 COVERS_DIR = DATA_DIR / "covers"
 IMAGES_DIR = DATA_DIR / "images"
 OPDS_CACHE_DIR = DATA_DIR / "opds_covers"
+DICT_DIR = DATA_DIR / "dictionaries"
+OFFLINE_DICT_PATH = DICT_DIR / "freedict.sqlite"
+OFFLINE_DICT_ARCHIVE = DICT_DIR / "freedict.sqlite.xz"
 DB_PATH = DATA_DIR / "library.db"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 CRASH_LOG = DATA_DIR / "crash.log"
 
-for _folder in (BOOKS_DIR, COVERS_DIR, IMAGES_DIR, OPDS_CACHE_DIR):
+for _folder in (BOOKS_DIR, COVERS_DIR, IMAGES_DIR, OPDS_CACHE_DIR, DICT_DIR):
     _folder.mkdir(parents=True, exist_ok=True)
 
 APP_ICON = DATA_DIR / "app.ico"

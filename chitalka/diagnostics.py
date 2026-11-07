@@ -139,6 +139,28 @@ def run_selftest() -> int:
             lines.append("ОШИБКА: определение языка")
         else:
             lines.append("Словарь/перевод: определение языка работает")
+        try:
+            offline = dictionary.offline_stats()
+            lines.append(f"Офлайн-словарь: {offline}")
+            if not offline.get("ru") or not offline.get("en"):
+                ok = False
+                lines.append("ОШИБКА: офлайн-словарь не загрузился")
+                error = dictionary.offline_last_error()
+                if error:
+                    lines.append(f"  {error}")
+            local = dictionary.lookup("дама", "ru")
+            if "офлайн" not in str(local.get("source", "")):
+                ok = False
+                lines.append("ОШИБКА: офлайн-статья не найдена")
+            cache_key = "selftest:lookup"
+            db.cache_set(cache_key, "ok")
+            if db.cache_get(cache_key) != "ok":
+                ok = False
+                lines.append("ОШИБКА: кэш словаря не работает")
+            db.cache_delete(cache_key)
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            lines.append(f"ОШИБКА офлайн-словаря: {exc}")
         for path in files:
             try:
                 meta = parse_meta(path)

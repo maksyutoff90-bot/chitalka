@@ -29,10 +29,15 @@ data/covers/
 data/images/
 data/opds_covers/
 data/books/Каталоги/
+data/dictionaries/freedict.sqlite
+data/dictionaries/*.sqlite.tmp
+data/*.tar.xz
+data/sample_*
 
 # Тестовые артефакты
 test_*_tmp.py
 test_*.py
+probe_*_tmp.py
 
 # Прочее
 *.log
