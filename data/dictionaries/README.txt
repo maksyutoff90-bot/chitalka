@@ -2,6 +2,7 @@
 =====================
 
 Источник: FreeDict / WikDict, издание 2025.11.23.
+© FreeDict contributors.
 Русско-английский и англо-русский словари.
 Данные распространяются по лицензии CC BY-SA 3.0:
 https://creativecommons.org/licenses/by-sa/3.0/

@@ -19,6 +19,8 @@ DOCS = [
     ("EULA.md", "Пользовательское соглашение"),
     ("PRIVACY.md", "Конфиденциальность"),
     ("THIRD_PARTY_NOTICES.md", "Сторонние компоненты"),
+    ("LICENSE_AUDIT.md", "Аудит лицензий"),
+    ("licenses/README.md", "Тексты лицензий"),
 ]
 
 
@@ -28,7 +30,7 @@ class AboutWindow(tk.Toplevel):
         self.palette = palette
         self.title("О программе")
         self.configure(bg=palette.panel)
-        self.geometry("560x540")
+        self.geometry("560x660")
         self.resizable(False, False)
         self.transient(master)
         self._build()

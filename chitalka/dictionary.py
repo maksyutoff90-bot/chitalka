@@ -241,38 +241,6 @@ def translate(text: str, source: str, target: str, *, cache=None,
     return (result, origin) if with_source else result
 
 
-def _english_dictionary(word: str) -> dict:
-    url = "https://api.dictionaryapi.dev/api/v2/entries/en/" + urllib.parse.quote(word)
-    payload = _fetch_json(url)
-    definitions: list[str] = []
-    phonetic = ""
-    if isinstance(payload, list):
-        for entry in payload[:2]:
-            if not phonetic:
-                phonetic = str(entry.get("phonetic") or "")
-            for meaning in entry.get("meanings") or []:
-                part = meaning.get("partOfSpeech") or ""
-                for item in (meaning.get("definitions") or [])[:5]:
-                    definition = " ".join(str(item.get("definition") or "").split())
-                    example = " ".join(str(item.get("example") or "").split())
-                    if definition:
-                        line = (f"{part}. " if part else "") + definition
-                        if example:
-                            line += f"  — {example}"
-                        definitions.append(line)
-            if definitions:
-                break
-    if not definitions:
-        raise DictionaryError("Слово не найдено")
-    return {
-        "word": word,
-        "language": "en",
-        "phonetic": phonetic,
-        "definitions": definitions[:8],
-        "url": "https://en.wiktionary.org/wiki/" + urllib.parse.quote(word),
-    }
-
-
 def _wiktionary_search_title(word: str, language: str) -> str:
     host = "ru.wiktionary.org" if language == "ru" else "en.wiktionary.org"
     url = f"https://{host}/w/api.php?" + urllib.parse.urlencode({
@@ -369,12 +337,8 @@ def lookup(text: str, language: str | None = None, *, cache=None) -> dict:
         return memory
     result: dict
     if language == "en":
-        try:
-            result = _english_dictionary(word)
-            result["source"] = "dictionaryapi.dev"
-        except Exception:
-            result = _wiktionary_dictionary(word, "en")
-            result["source"] = "Wiktionary"
+        result = _wiktionary_dictionary(word, "en")
+        result["source"] = "Wiktionary"
     else:
         result = _wiktionary_dictionary(word, language)
         result["source"] = "Wiktionary"
