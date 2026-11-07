@@ -225,7 +225,7 @@ def run_selftest() -> int:
         # Интерфейс библиотеки и читалки.
         from .ui.library import LibraryApp
 
-        app = LibraryApp(load_settings())
+        app = LibraryApp(load_settings(), show_wizard=False)
         app.suppress_dialogs = True
         _pump(app, 2.0)
         lines.append(f"Окно библиотеки: карточек {len(app.cards)}, всего {len(app.books)}")
@@ -488,7 +488,7 @@ def screenshot_from_argv(argv: list[str]):
         from .ui.library import LibraryApp
         from .ui.reader import ReaderWindow
 
-        app = LibraryApp()
+        app = LibraryApp(show_wizard=False)
         app.geometry("1440x900+30+20")
         app.attributes("-topmost", True)
         app.lift()

@@ -38,6 +38,7 @@ def main() -> int:
         "--specpath", str(BUILD),
         "--collect-all", "pymupdf",
         "--collect-all", "lxml",
+        "--collect-all", "tkinterdnd2",
         "--add-data", f"{icon};data",
         str(ROOT / "main.py"),
     ]

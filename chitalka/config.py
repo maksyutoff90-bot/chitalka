@@ -93,6 +93,8 @@ class Settings:
     recent_books: list[int] = None  # type: ignore[assignment]
     library_scroll: float = 0.0
     details_open: bool = True
+    simple_mode: bool = False
+    onboarding_done: bool = False
 
     def __post_init__(self) -> None:
         if self.folders is None:

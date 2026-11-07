@@ -39,6 +39,15 @@ log = logging.getLogger(__name__)
 UI = "Segoe UI"
 SERIF = "Georgia"
 
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    _DND_BASE = TkinterDnD.Tk
+    _DND_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    DND_FILES = None
+    _DND_BASE = tk.Tk
+    _DND_AVAILABLE = False
+
 CARD_W = 176
 CARD_H = 338
 CARD_COVER = (170, 255)
@@ -302,10 +311,13 @@ class BookRow(tk.Frame):
         self.configure(bg=self.palette.card_hover if value else self.palette.card)
 
 
-class LibraryApp(tk.Tk):
-    def __init__(self, settings: Settings | None = None) -> None:
+class LibraryApp(_DND_BASE):
+    def __init__(self, settings: Settings | None = None, show_wizard: bool = True) -> None:
         super().__init__()
         self.settings = settings or load_settings()
+        self.show_wizard = show_wizard
+        self.onboarding_window = None
+        self.help_window = None
         self.palette = palette(self.settings.ui_theme)
         configure_ttk(self, self.palette)
         self.db = LibraryDB()
@@ -336,6 +348,8 @@ class LibraryApp(tk.Tk):
             self.geometry("1400x860")
         self._set_icon()
         self._build()
+        self._apply_simple_mode()
+        self._setup_dnd()
         self._refresh()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Control-f>", lambda _e: self.search.focus())
@@ -346,6 +360,7 @@ class LibraryApp(tk.Tk):
         self.bind("<Escape>", lambda _e: self._clear_search_or_selection())
         self.after(120, self._poll_import)
         self.after(350, lambda: self.start_import(self.settings.folders))
+        self.after(550, self._maybe_show_onboarding)
 
     # ------------------------------------------------------------------ окно
     def _set_icon(self) -> None:
@@ -419,6 +434,16 @@ class LibraryApp(tk.Tk):
         bottom = tk.Frame(self.sidebar, bg=palette.panel)
         bottom.pack(side="bottom", fill="x", pady=14, padx=14)
         Divider(bottom, palette).pack(fill="x", pady=(0, 10))
+        self.simple_var = tk.BooleanVar(value=bool(self.settings.simple_mode))
+        self.simple_check = tk.Checkbutton(
+            bottom, text="  Только чтение", variable=self.simple_var,
+            command=self._toggle_simple_mode, bg=palette.panel, fg=palette.muted,
+            activebackground=palette.panel, activeforeground=palette.text,
+            selectcolor=palette.panel, font=(UI, 8), anchor="w",
+            bd=0, highlightthickness=0, cursor="hand2",
+        )
+        self.simple_check.pack(fill="x", pady=(0, 6))
+        Tooltip(self.simple_check, "Скрыть каталоги и статистику", palette)
         row = tk.Frame(bottom, bg=palette.panel)
         row.pack(fill="x")
         self.theme_button = IconButton(
@@ -671,8 +696,9 @@ class LibraryApp(tk.Tk):
                        icon="folder", kind="primary", height=38).pack(pady=(16, 4))
             PillButton(frame, palette, "Добавить файлы", self.add_files,
                        icon="plus", kind="soft", height=36).pack(pady=4)
-            PillButton(frame, palette, "Скачать из Gutenberg", self.open_catalogs,
-                       icon="globe", kind="ghost", height=36).pack(pady=4)
+            if not self.settings.simple_mode:
+                PillButton(frame, palette, "Скачать из Gutenberg", self.open_catalogs,
+                           icon="globe", kind="ghost", height=36).pack(pady=4)
             link = tk.Label(frame, text="Как это работает (F1)", bg=palette.bg,
                             fg=palette.accent, font=(UI, 8), cursor="hand2")
             link.pack(pady=(10, 0))
@@ -1232,6 +1258,130 @@ class LibraryApp(tk.Tk):
         self._refresh()
         if self.selected_id:
             self._render_detail()
+
+    # ------------------------------------------------------------------ простой режим
+    def _apply_simple_mode(self) -> None:
+        if not hasattr(self, "nav_stats"):
+            return
+        simple = bool(self.settings.simple_mode)
+        if hasattr(self, "simple_var"):
+            self.simple_var.set(simple)
+        if simple:
+            self.nav_stats.pack_forget()
+            self.nav_catalogs.pack_forget()
+            for attr in ("stats_window", "catalog_window"):
+                window = getattr(self, attr, None)
+                if window is not None:
+                    try:
+                        window.destroy()
+                    except tk.TclError:
+                        pass
+                    setattr(self, attr, None)
+        else:
+            self.nav_stats.pack(fill="x", padx=10, pady=1, before=self.nav_notes)
+            self.nav_catalogs.pack(fill="x", padx=10, pady=1, after=self.nav_notes)
+
+    def _toggle_simple_mode(self) -> None:
+        self.settings.simple_mode = bool(self.simple_var.get())
+        self.settings.save()
+        self._apply_simple_mode()
+        self._refresh()
+
+    def _maybe_show_onboarding(self) -> None:
+        if not self.show_wizard or self.settings.onboarding_done:
+            return
+        if self.onboarding_window is not None:
+            try:
+                if self.onboarding_window.winfo_exists():
+                    return
+            except tk.TclError:
+                pass
+        from .wizard import OnboardingWizard
+
+        self.onboarding_window = OnboardingWizard(
+            self, self.palette, on_finish=self._finish_onboarding,
+            on_add_folder=self.add_folder, on_add_files=self.add_files,
+            on_catalogs=self.open_catalogs,
+        )
+
+    def _finish_onboarding(self, simple_mode: bool) -> None:
+        self.settings.simple_mode = bool(simple_mode)
+        self.settings.onboarding_done = True
+        self.settings.save()
+        self._apply_simple_mode()
+        self._refresh()
+        self.onboarding_window = None
+
+    # ------------------------------------------------------------------ drag & drop
+    def _setup_dnd(self) -> None:
+        if not _DND_AVAILABLE:
+            return
+        self.drop_hint = tk.Label(
+            self, text="Отпустите файлы или папку, чтобы добавить в библиотеку",
+            bg=self.palette.accent_soft, fg=self.palette.text,
+            font=(UI, 10, "bold"), padx=24, pady=14,
+            bd=1, relief="solid", highlightthickness=0,
+        )
+        targets = [self, self.sidebar, self.main, self.body,
+                   self.grid_scroll.canvas]
+        for widget in targets:
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_drop)
+                widget.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+                widget.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+            except Exception:
+                continue
+
+    def _on_drop_enter(self, _event=None):
+        if self._closed:
+            return
+        try:
+            self.drop_hint.place(relx=0.5, rely=0.5, anchor="center")
+            self.drop_hint.lift()
+        except tk.TclError:
+            pass
+        return "copy"
+
+    def _on_drop_leave(self, _event=None):
+        try:
+            self.drop_hint.place_forget()
+        except tk.TclError:
+            pass
+        return "copy"
+
+    def _on_drop(self, event):
+        try:
+            self.drop_hint.place_forget()
+        except tk.TclError:
+            pass
+        try:
+            paths = [str(path) for path in self.tk.splitlist(event.data)]
+        except Exception:
+            paths = [str(event.data)]
+        folders = []
+        files = []
+        supported = {".fb2", ".epub", ".pdf", ".txt"}
+        for raw in paths:
+            path = Path(raw)
+            if path.is_dir():
+                folders.append(str(path))
+                continue
+            name = path.name.lower()
+            if path.suffix.lower() in supported or name.endswith(".fb2.zip"):
+                files.append(str(path))
+        for folder in folders:
+            if folder not in self.settings.folders:
+                self.settings.folders.append(folder)
+        if folders:
+            self.settings.save()
+            self._render_folders()
+        queue_paths = folders + files
+        if queue_paths:
+            self.start_import(queue_paths)
+        else:
+            self.status_right.configure(text="Эти файлы не подходят: нужны FB2, EPUB, PDF или TXT")
+        return "copy"
 
     # ------------------------------------------------------------------ закрытие
     def _on_close(self) -> None:
