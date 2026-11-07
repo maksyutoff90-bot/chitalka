@@ -389,6 +389,7 @@ python -m pytest -q
 - [FreeDict и CC BY-SA](legal/FREEDICT_SHAREALIKE_MEMO.md) — memo по share-alike.
 - [Пакет для юриста](legal/LAWYER_BRIEF.md) — вопросы и факты для проверки.
 - [Россия: чек-лист](legal/RUSSIA_CHECKLIST.md) — 152-ФЗ, потребители, платежи.
+- [Подпись exe](legal/SIGNING_OPTIONS.md) — цены и бесплатные варианты.
 - [Статус проверки](legal/LEGAL_REVIEW_STATUS.md) — **пока не проверено юристом**.
 - [Письмо юристу](legal/COUNSEL_EMAIL.md) — шаблон запроса.
 - [Тексты лицензий](legal/licenses/README.md) — полные тексты компонентов.
