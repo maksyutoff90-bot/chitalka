@@ -175,5 +175,10 @@ def draw_icon(canvas: tk.Canvas, name: str, cx: float, cy: float, size: float,
             yy = cy + offset
             _line(canvas, left + 1, yy, left + 1 + 4 + indent, yy, color=color, width=width, tags=tags)
             _line(canvas, left + 9 + indent, yy, right, yy, color=color, width=1, tags=tags)
+    elif name == "help":
+        canvas.create_oval(left + 1, top + 1, right - 1, bottom - 1,
+                           outline=color, width=width, tags=tags)
+        canvas.create_text(cx, cy, text="?", fill=color,
+                           font=("Georgia", max(8, int(size * 0.8)), "bold"), tags=tags)
     else:
         canvas.create_oval(left + 2, top + 2, right - 2, bottom - 2, outline=color, width=width, tags=tags)

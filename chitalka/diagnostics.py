@@ -347,6 +347,20 @@ def run_selftest() -> int:
                 except Exception as exc:  # noqa: BLE001
                     ok = False
                     lines.append(f"ОШИБКА всех заметок: {exc}")
+                try:
+                    app.show_help()
+                    _pump(app, 0.6)
+                    help_window = getattr(app, "help_window", None)
+                    if help_window is None or not help_window.winfo_exists():
+                        ok = False
+                        lines.append("ОШИБКА: справка не открылась")
+                    else:
+                        lines.append("Быстрый старт: справка открыта")
+                        help_window.destroy()
+                        app.help_window = None
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА справки: {exc}")
             else:
                 ok = False
                 lines.append("ОШИБКА: окно чтения не открылось")

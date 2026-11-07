@@ -144,6 +144,8 @@ class ReaderWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.bind("<Escape>", self._on_escape)
         self.bind("<F11>", lambda _e: self.toggle_fullscreen())
+        self.bind("<F1>", lambda _e: self.show_help())
+        self.bind("<Control-h>", lambda _e: self.show_help())
         self.bind("<Control-f>", lambda _e: self._open_panel("search"))
         self.bind("<Control-t>", lambda _e: self._open_panel("toc"))
         self.bind("<Control-b>", lambda _e: self._open_panel("bookmarks"))
@@ -1272,6 +1274,21 @@ class ReaderWindow(tk.Toplevel):
         self.after(1600, lambda: self.chapter_label.configure(text=previous)
                    if self.winfo_exists() else None)
 
+    def show_help(self) -> None:
+        from .help import HelpWindow
+
+        window = getattr(self, "_help_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.lift()
+                    window.focus_set()
+                    return
+            except tk.TclError:
+                pass
+        self._help_window = HelpWindow(self, self.palette)
+        self._help_window.lift()
+
     # ------------------------------------------------------------------ сохранение
     def _current_block(self) -> int:
         if self.is_pdf:
@@ -2096,6 +2113,7 @@ class ReaderWindow(tk.Toplevel):
         menu.add_command(label="Заметки и выделения", command=lambda: self._open_panel("notes"))
         menu.add_command(label="Содержание", command=lambda: self._open_panel("toc"))
         menu.add_command(label="Оформление", command=lambda: self._open_panel("settings"))
+        menu.add_command(label="Помощь (F1)", command=self.show_help)
         menu.tk_popup(event.x_root, event.y_root)
 
     # ------------------------------------------------------------------ закрытие

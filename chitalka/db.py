@@ -212,6 +212,12 @@ class LibraryDB:
     def get(self, book_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM books WHERE id=?", (book_id,)).fetchone()
 
+    def last_read(self) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM books WHERE COALESCE(last_read_at,'') != '' "
+            "ORDER BY last_read_at DESC LIMIT 1"
+        ).fetchone()
+
     def by_path(self, path: str | Path) -> sqlite3.Row | None:
         return self.conn.execute(
             "SELECT * FROM books WHERE path=?", (str(path),)

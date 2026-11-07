@@ -312,7 +312,7 @@ class LibraryApp(tk.Tk):
         self.cover_cache = CoverCache()
         self.books: list = []
         self.cards: list = []
-        self.selected_id: int | None = self.settings.last_book_id or None
+        self.selected_id: int | None = None
         self.status_filter = "all"
         self.format_filter = self.settings.filter_format if self.settings.filter_format else "all"
         self.sort_key = self.settings.sort if self.settings.sort in SORT_LABELS else "recent"
@@ -340,6 +340,10 @@ class LibraryApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Control-f>", lambda _e: self.search.focus())
         self.bind("<Control-o>", lambda _e: self.add_folder())
+        self.bind("<F1>", lambda _e: self.show_help())
+        self.bind("<Control-h>", lambda _e: self.show_help())
+        self.bind("<Return>", lambda _e: self._open_selected())
+        self.bind("<Escape>", lambda _e: self._clear_search_or_selection())
         self.after(120, self._poll_import)
         self.after(350, lambda: self.start_import(self.settings.folders))
 
@@ -454,7 +458,7 @@ class LibraryApp(tk.Tk):
         palette = self.palette
         for child in self.main.winfo_children():
             child.destroy()
-        self.main.grid_rowconfigure(2, weight=1)
+        self.main.grid_rowconfigure(3, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 
         top = tk.Frame(self.main, bg=palette.bg)
@@ -469,9 +473,11 @@ class LibraryApp(tk.Tk):
 
         right = tk.Frame(top, bg=palette.bg)
         right.pack(side="right", fill="y")
-        self.add_button = PillButton(right, palette, "Добавить", self._add_menu,
+        self.add_button = PillButton(right, palette, "Добавить книги", self._add_menu,
                                      icon="plus", height=38, font_size=9)
         self.add_button.pack(side="right", padx=(12, 0))
+        IconButton(right, palette, "help", self.show_help, size=36,
+                   tooltip="Как пользоваться (F1)").pack(side="right", padx=(4, 0))
         self.view_list = IconButton(right, palette, "list", lambda: self._set_view("list"),
                                     size=36, tooltip="Списком")
         self.view_list.pack(side="right", padx=(4, 0))
@@ -490,8 +496,12 @@ class LibraryApp(tk.Tk):
         self.search.pack(side="right", padx=(0, 12))
         self.search.configure(height=40)
 
+        self.continue_bar = tk.Frame(self.main, bg=palette.bg)
+        self.continue_bar.grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 8))
+        self.continue_bar.grid_remove()
+
         filters = tk.Frame(self.main, bg=palette.bg)
-        filters.grid(row=1, column=0, sticky="ew", padx=28, pady=(2, 10))
+        filters.grid(row=2, column=0, sticky="ew", padx=28, pady=(2, 10))
         self.chips: dict[str, Chip] = {}
         for index, (key, label) in enumerate(FORMATS):
             chip = Chip(filters, palette, label,
@@ -500,7 +510,7 @@ class LibraryApp(tk.Tk):
             self.chips[key] = chip
 
         body = tk.Frame(self.main, bg=palette.bg)
-        body.grid(row=2, column=0, sticky="nsew", padx=(28, 20), pady=(0, 0))
+        body.grid(row=3, column=0, sticky="nsew", padx=(28, 20), pady=(0, 0))
         body.grid_rowconfigure(0, weight=1)
         body.grid_columnconfigure(0, weight=1)
         self.body = body
@@ -517,7 +527,7 @@ class LibraryApp(tk.Tk):
         self.detail_visible = False
 
         status = tk.Frame(self.main, bg=palette.bg, height=38)
-        status.grid(row=3, column=0, sticky="ew", padx=28, pady=(6, 10))
+        status.grid(row=4, column=0, sticky="ew", padx=28, pady=(6, 10))
         self.status_left = tk.Label(status, text="", bg=palette.bg, fg=palette.muted,
                                     font=(UI, 8), anchor="w")
         self.status_left.pack(side="left")
@@ -549,10 +559,51 @@ class LibraryApp(tk.Tk):
                  f"{authors} {plural(authors, 'автор', 'автора', 'авторов')}"
         )
         self._rebuild_books()
+        self._refresh_continue()
         self._render_detail()
         self.after_idle(lambda: self.grid_scroll.restore(scroll) if keep_scroll else None)
         if not self.importing:
             self._update_status()
+
+    def _refresh_continue(self) -> None:
+        if not hasattr(self, "continue_bar"):
+            return
+        for child in self.continue_bar.winfo_children():
+            child.destroy()
+        if self.detail_visible or self._counts.get("total", 0) <= 0:
+            self.continue_bar.grid_remove()
+            return
+        row = self.db.last_read()
+        if row is None:
+            self.continue_bar.grid_remove()
+            return
+        palette = self.palette
+        self.continue_bar.grid()
+        panel = tk.Frame(self.continue_bar, bg=palette.panel)
+        panel.pack(fill="x")
+        cover = tk.Label(panel, bg=palette.panel, bd=0)
+        cover.pack(side="left", padx=(14, 12), pady=9)
+        photo = self.cover_cache.get(row["cover"], (34, 48), radius=4)
+        if photo:
+            cover.configure(image=photo)
+            cover._photo = photo  # type: ignore[attr-defined]
+        else:
+            cover.configure(text=(row["title"] or "?")[:1], fg=palette.muted,
+                            font=(SERIF, 14, "bold"))
+        box = tk.Frame(panel, bg=palette.panel)
+        box.pack(side="left", fill="x", expand=True, pady=9)
+        tk.Label(box, text="ПРОДОЛЖИТЬ ЧТЕНИЕ", bg=palette.panel, fg=palette.dim,
+                 font=(UI, 6, "bold"), anchor="w").pack(fill="x")
+        tk.Label(box, text=row["title"] or "Без названия", bg=palette.panel,
+                 fg=palette.text, font=(SERIF, 11, "bold"), anchor="w").pack(fill="x")
+        progress = float(row["progress"] or 0)
+        detail = f"{progress:.0f}% прочитано · {row['author'] or 'автор неизвестен'}"
+        tk.Label(box, text=detail, bg=palette.panel, fg=palette.muted,
+                 font=(UI, 7), anchor="w").pack(fill="x", pady=(2, 0))
+        label = "Перечитать" if progress >= 99 else "Продолжить"
+        PillButton(panel, palette, label, lambda book_id=int(row["id"]): self.open_book(book_id),
+                   kind="primary", height=34, font_size=8,
+                   bg=palette.panel).pack(side="right", padx=14)
 
     def _update_sidebar_counts(self) -> None:
         counts = self._counts
@@ -598,21 +649,34 @@ class LibraryApp(tk.Tk):
                          highlightthickness=0, bd=0)
         icon.pack()
         draw_icon(icon, "book", 32, 32, 40, palette.dim, width=1.5)
-        if self.search_query or self.format_filter != "all" or self.status_filter != "all":
+        filtered = bool(self.search_query or self.format_filter != "all"
+                        or self.status_filter != "all")
+        if filtered:
             title = "Ничего не найдено"
             text = "Попробуйте изменить запрос или снять фильтры."
-            action = ("Сбросить фильтры", self._reset_filters)
         else:
-            title = "Библиотека пока пуста"
-            text = "Добавьте папку с книгами — FB2, EPUB, PDF или TXT."
-            action = ("Добавить папку", self.add_folder)
+            title = "Начните с книг"
+            text = ("Добавьте папку или файлы. Подойдут FB2, EPUB, PDF и TXT.\n"
+                    "Или скачайте книгу из Gutenberg / Викитеки.\n"
+                    "Двойной клик по обложке — открыть книгу.")
         tk.Label(frame, text=title, bg=palette.bg, fg=palette.text,
                  font=(SERIF, 18, "bold")).pack(pady=(14, 6))
         tk.Label(frame, text=text, bg=palette.bg, fg=palette.muted,
-                 font=(UI, 9)).pack()
-        if action[1]:
-            PillButton(frame, palette, action[0], action[1], kind="soft",
-                       height=36).pack(pady=16)
+                 font=(UI, 9), justify="center").pack()
+        if filtered:
+            PillButton(frame, palette, "Сбросить фильтры", self._reset_filters,
+                       kind="soft", height=36).pack(pady=16)
+        else:
+            PillButton(frame, palette, "Добавить папку", self.add_folder,
+                       icon="folder", kind="primary", height=38).pack(pady=(16, 4))
+            PillButton(frame, palette, "Добавить файлы", self.add_files,
+                       icon="plus", kind="soft", height=36).pack(pady=4)
+            PillButton(frame, palette, "Скачать из Gutenberg", self.open_catalogs,
+                       icon="globe", kind="ghost", height=36).pack(pady=4)
+            link = tk.Label(frame, text="Как это работает (F1)", bg=palette.bg,
+                            fg=palette.accent, font=(UI, 8), cursor="hand2")
+            link.pack(pady=(10, 0))
+            link.bind("<Button-1>", lambda _e: self.show_help())
 
     def _layout_grid(self) -> None:
         if self.settings.view != "grid" or not self.cards:
@@ -703,6 +767,7 @@ class LibraryApp(tk.Tk):
         if not self.selected_id:
             self.detail.grid_remove()
             self.detail_visible = False
+            self._refresh_continue()
             self.after_idle(self._layout_grid)
             return
         row = self.db.get(self.selected_id)
@@ -710,6 +775,7 @@ class LibraryApp(tk.Tk):
             self.selected_id = None
             self.detail.grid_remove()
             self.detail_visible = False
+            self._refresh_continue()
             return
         self.detail.grid()
         self.detail_visible = True
@@ -805,6 +871,7 @@ class LibraryApp(tk.Tk):
             side="left", padx=(6, 0)
         )
         self.after_idle(self._layout_grid)
+        self._refresh_continue()
 
     def _deselect(self) -> None:
         self.selected_id = None
@@ -1040,7 +1107,7 @@ class LibraryApp(tk.Tk):
     def _reader_closed(self, book_id: int) -> None:
         self.deiconify()
         self.lift()
-        self.selected_id = int(book_id)
+        self.selected_id = None
         self.settings.last_book_id = int(book_id)
         self.settings.save()
         self._refresh()
@@ -1059,6 +1126,36 @@ class LibraryApp(tk.Tk):
                     notes.refresh()
             except tk.TclError:
                 self.notes_window = None
+
+    def show_help(self) -> None:
+        from .help import HelpWindow
+
+        window = getattr(self, "help_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.lift()
+                    window.focus_set()
+                    return
+            except tk.TclError:
+                pass
+        try:
+            self.help_window = HelpWindow(self, self.palette)
+            self.help_window.lift()
+            self.help_window.focus_set()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Справка", str(exc), parent=self)
+
+    def _open_selected(self) -> None:
+        if self.selected_id:
+            self.open_book(self.selected_id)
+
+    def _clear_search_or_selection(self) -> None:
+        if self.search.get():
+            self.search.set("")
+            return
+        if self.selected_id:
+            self._deselect()
 
     def open_notes(self) -> None:
         from .allnotes import NotesWindow
