@@ -20,6 +20,7 @@ DOCS = [
     ("PRIVACY.md", "Конфиденциальность"),
     ("THIRD_PARTY_NOTICES.md", "Сторонние компоненты"),
     ("LICENSE_AUDIT.md", "Аудит лицензий"),
+    ("FREEDICT_SHAREALIKE_MEMO.md", "FreeDict и CC BY-SA"),
     ("licenses/README.md", "Тексты лицензий"),
 ]
 

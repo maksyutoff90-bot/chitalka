@@ -17,6 +17,7 @@ from typing import Any
 APP_NAME = "Читалка"
 APP_TAGLINE = "библиотека и чтение"
 APP_VERSION = "1.0.0"
+LEGAL_VERSION = "1.0"
 
 
 def _base_dir() -> Path:
@@ -96,6 +97,7 @@ class Settings:
     details_open: bool = True
     simple_mode: bool = False
     onboarding_done: bool = False
+    legal_accepted_version: str = ""
     translation_provider: str = "offline"   # offline | deepl | libre | mymemory
     translation_endpoint: str = ""
     translation_key: str = ""

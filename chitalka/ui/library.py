@@ -13,8 +13,8 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from ..config import (
-    APP_ICON, APP_NAME, APP_TAGLINE, APP_VERSION, Settings, fit_geometry, human_size,
-    load_settings,
+    APP_ICON, APP_NAME, APP_TAGLINE, APP_VERSION, LEGAL_VERSION, Settings, fit_geometry,
+    human_size, load_settings,
 )
 from ..covers import ensure_cover
 from ..db import LibraryDB
@@ -318,6 +318,7 @@ class LibraryApp(_DND_BASE):
         self.settings = settings or load_settings()
         self.show_wizard = show_wizard
         self.onboarding_window = None
+        self.legal_gate = None
         self.help_window = None
         self.palette = palette(self.settings.ui_theme)
         configure_ttk(self, self.palette)
@@ -361,7 +362,10 @@ class LibraryApp(_DND_BASE):
         self.bind("<Escape>", lambda _e: self._clear_search_or_selection())
         self.after(120, self._poll_import)
         self.after(350, lambda: self.start_import(self.settings.folders))
-        self.after(550, self._maybe_show_onboarding)
+        if self.show_wizard and not self._legal_accepted():
+            self.after(300, self._show_legal_gate)
+        else:
+            self.after(550, self._maybe_show_onboarding)
 
     # ------------------------------------------------------------------ окно
     def _set_icon(self) -> None:
@@ -1339,6 +1343,30 @@ class LibraryApp(_DND_BASE):
         self.settings.save()
         self._apply_simple_mode()
         self._refresh()
+
+    def _legal_accepted(self) -> bool:
+        return str(getattr(self.settings, "legal_accepted_version", "")) == LEGAL_VERSION
+
+    def _show_legal_gate(self) -> None:
+        if self._legal_accepted():
+            self.after(250, self._maybe_show_onboarding)
+            return
+        from .legal_gate import LegalGate
+
+        self.legal_gate = LegalGate(
+            self, self.palette, on_accept=self._accept_legal,
+            on_decline=self._decline_legal,
+        )
+
+    def _accept_legal(self) -> None:
+        self.settings.legal_accepted_version = LEGAL_VERSION
+        self.settings.save()
+        self.legal_gate = None
+        self.after(250, self._maybe_show_onboarding)
+
+    def _decline_legal(self) -> None:
+        self.legal_gate = None
+        self._on_close()
 
     def _maybe_show_onboarding(self) -> None:
         if not self.show_wizard or self.settings.onboarding_done:

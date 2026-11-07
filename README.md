@@ -19,6 +19,10 @@
 
 При первом запуске открывается короткий мастер из **трёх экранов**; на последнем
 можно сразу включить режим **«Только чтение»** — без каталогов и статистики.
+Перед мастером показывается принятие **EULA и политики конфиденциальности**;
+факт принятия сохраняется локально (`legal_accepted_version`).
+
+![Принятие условий](data/screenshots/legal_gate.png)
 
 ![Мастер первого запуска](data/screenshots/wizard.png)
 
@@ -382,6 +386,7 @@ python -m pytest -q
 - [Сторонние компоненты](legal/THIRD_PARTY_NOTICES.md) — лицензии FreeDict,
   PDFium/pypdfium2, библиотек и сервисов.
 - [Аудит лицензий](legal/LICENSE_AUDIT.md) — проверка runtime-зависимостей.
+- [FreeDict и CC BY-SA](legal/FREEDICT_SHAREALIKE_MEMO.md) — memo по share-alike.
 - [Тексты лицензий](legal/licenses/README.md) — полные тексты компонентов.
 - [Блокеры коммерческого релиза](legal/RELEASE_BLOCKERS.md) — что осталось
   сделать перед продажей.
