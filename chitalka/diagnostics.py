@@ -155,6 +155,8 @@ def run_selftest() -> int:
                     if image.width < 10 or image.height < 10:
                         ok = False
                         lines.append(f"  ОШИБКА рендера PDF: {path.name}")
+                    words = pdf.words(0)
+                    lines.append(f"  PDF-слов на первой странице: {len(words)}")
                     pdf.close()
                 else:
                     detail = f"блоков {len(doc.blocks)}, глав {len(doc.chapters)}"
@@ -309,6 +311,20 @@ def run_selftest() -> int:
                 except Exception as exc:  # noqa: BLE001
                     ok = False
                     lines.append(f"ОШИБКА статистики: {exc}")
+                try:
+                    app.open_notes()
+                    _pump(app, 0.8)
+                    notes_window = getattr(app, "notes_window", None)
+                    if notes_window is None or not notes_window.winfo_exists():
+                        ok = False
+                        lines.append("ОШИБКА: окно всех заметок не открылось")
+                    else:
+                        lines.append("Все заметки: окно открыто")
+                        notes_window.destroy()
+                        app.notes_window = None
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА всех заметок: {exc}")
             else:
                 ok = False
                 lines.append("ОШИБКА: окно чтения не открылось")

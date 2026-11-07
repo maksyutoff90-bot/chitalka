@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import json
 import time
 import tkinter as tk
 import tkinter.font as tkfont
@@ -75,6 +76,8 @@ class ReaderWindow(tk.Toplevel):
         palette: Palette,
         cover_cache=None,
         on_close=None,
+        start_page: int | None = None,
+        start_block: int | None = None,
     ) -> None:
         super().__init__(master)
         self.row = row
@@ -84,6 +87,8 @@ class ReaderWindow(tk.Toplevel):
         self.db = db
         self.palette = palette
         self.on_close_cb = on_close
+        self._start_page = start_page
+        self._start_block = start_block
         self.doc: Document | None = None
         self.pdf: PdfBook | None = None
         self.is_pdf = False
@@ -116,6 +121,8 @@ class ReaderWindow(tk.Toplevel):
         self.annotations: list = []
         self.selection: dict | None = None
         self._sel_anchor: tuple[int, int] | None = None
+        self._pdf_anchor: int | None = None
+        self._pdf_geom: dict = {}
         self._press_xy: tuple[int, int] | None = None
         self._selection_dragged = False
         self._selection_toolbar: SelectionToolbar | None = None
@@ -267,6 +274,8 @@ class ReaderWindow(tk.Toplevel):
                     raise ValueError("В PDF нет страниц")
                 progress = float(self.row["progress"] or 0)
                 start = 0 if progress >= 99 else int(self.row["position"] or 0)
+                if self._start_page is not None:
+                    start = int(self._start_page)
                 self.page_index = max(0, min(self.page_count - 1, start))
                 self.loading.place_forget()
                 self._ready = True
@@ -277,6 +286,8 @@ class ReaderWindow(tk.Toplevel):
                 self._initial_block = int(self.row["position"] or 0)
                 if float(self.row["progress"] or 0) >= 99:
                     self._initial_block = 0
+                if self._start_block is not None:
+                    self._initial_block = max(0, int(self._start_block))
                 self.loading.configure(text="Вёрстка…")
                 self.update_idletasks()
                 self._layout_text(initial=True)
@@ -289,18 +300,21 @@ class ReaderWindow(tk.Toplevel):
             self.after(200, self.close)
 
     def _chapter_for_page(self) -> str:
+        return self._chapter_at_page(self.page_index)
+
+    def _chapter_at_page(self, page_index: int) -> str:
         if not self.doc:
             return ""
         if self.is_pdf:
             title = ""
             for chapter in self.doc.chapters:
-                if chapter.position <= self.page_index:
+                if chapter.position <= page_index:
                     title = chapter.title
                 else:
                     break
-            return title or f"Страница {self.page_index + 1}"
-        if self.pages and self.page_index < len(self.pages):
-            return self.pages[self.page_index].chapter or self.doc.title
+            return title or f"Страница {page_index + 1}"
+        if self.pages and page_index < len(self.pages):
+            return self.pages[page_index].chapter or self.doc.title
         return self.doc.title
 
     # ------------------------------------------------------------------ вёрстка
@@ -542,6 +556,81 @@ class ReaderWindow(tk.Toplevel):
                                         fill=theme.muted, font=(UI, 10))
                 return
         self.canvas.create_image(x, y, anchor="nw", image=photo)
+        self._pdf_geom = {
+            "x": x, "y": y, "w": width, "h": height,
+            "pw": pw_pt, "ph": ph_pt, "page": self.page_index,
+        }
+        self._draw_pdf_annotations(theme)
+        self._draw_pdf_selection(theme)
+
+    def _parse_pdf_rects(self, annotation) -> list[list[float]]:
+        raw = str(annotation["rects"] or "")
+        if not raw:
+            return []
+        try:
+            value = json.loads(raw)
+        except Exception:
+            return []
+        result = []
+        for item in value:
+            if isinstance(item, (list, tuple)) and len(item) == 4:
+                try:
+                    result.append([float(item[0]), float(item[1]),
+                                   float(item[2]), float(item[3])])
+                except (TypeError, ValueError):
+                    continue
+        return result
+
+    def _pdf_rect_canvas(self, rect: list[float], g: dict) -> tuple[float, float, float, float]:
+        x1 = g["x"] + rect[0] * g["w"]
+        y1 = g["y"] + rect[1] * g["h"]
+        x2 = g["x"] + rect[2] * g["w"]
+        y2 = g["y"] + rect[3] * g["h"]
+        return x1, y1, x2, y2
+
+    def _draw_pdf_annotations(self, theme) -> None:
+        g = self._pdf_geom
+        if not g:
+            return
+        for annotation in self.annotations:
+            if int(annotation["page"] if annotation["page"] is not None else -1) != self.page_index:
+                continue
+            rects = self._parse_pdf_rects(annotation)
+            if not rects:
+                continue
+            fill = note_color(str(annotation["color"]), theme.is_dark)
+            for rect in rects:
+                x1, y1, x2, y2 = self._pdf_rect_canvas(rect, g)
+                self.canvas.create_rectangle(
+                    x1, y1, x2, y2, fill=fill, outline="",
+                    stipple="gray50", tags=("annotation",),
+                )
+            first = self._pdf_rect_canvas(rects[0], g)
+            marker_x = max(g["x"] + 7, first[0] - 8)
+            marker_y = (first[1] + first[3]) / 2
+            tag = f"ann:{annotation['id']}"
+            self.canvas.create_oval(
+                marker_x - 4, marker_y - 4, marker_x + 4, marker_y + 4,
+                fill=fill, outline=theme.rule, tags=("annotation_marker", tag),
+            )
+            self.canvas.tag_bind(
+                tag, "<Button-1>", lambda _e: self._open_panel("notes")
+            )
+
+    def _draw_pdf_selection(self, theme) -> None:
+        selection = self.selection
+        g = self._pdf_geom
+        if not selection or not g or selection.get("kind") != "pdf":
+            return
+        if int(selection.get("page", -1)) != self.page_index:
+            return
+        fill = "#31465a" if theme.is_dark else "#cfe2f3"
+        for rect in selection.get("rects", []):
+            x1, y1, x2, y2 = self._pdf_rect_canvas(rect, g)
+            self.canvas.create_rectangle(
+                x1, y1, x2, y2, fill=fill, outline="",
+                stipple="gray50", tags=("selection",),
+            )
 
     def _update_bottom(self) -> None:
         total = self._total_pages()
@@ -619,18 +708,38 @@ class ReaderWindow(tk.Toplevel):
         self._press_xy = (event.x, event.y)
         self._selection_dragged = False
         self._sel_anchor = None
+        self._pdf_anchor = None
         if self.selection:
             self._clear_selection()
         if self.is_pdf:
+            self._pdf_anchor = self._pdf_hit_word(event.x, event.y)
+            if self._pdf_anchor is None and self.pdf and not self.pdf.words(self.page_index):
+                self._flash("В PDF нет текстового слоя")
             return
         self._sel_anchor = self._hit_test(event.x, event.y)
 
     def _on_selection_motion(self, event) -> None:
-        if self.is_pdf or not self._sel_anchor or self._press_xy is None:
+        if self._press_xy is None:
             return
         dx = event.x - self._press_xy[0]
         dy = event.y - self._press_xy[1]
         if not self._selection_dragged and abs(dx) + abs(dy) < 4:
+            return
+        if self.is_pdf:
+            if self._pdf_anchor is None:
+                return
+            position = self._pdf_hit_word(event.x, event.y)
+            if position is None:
+                return
+            selection = self._make_pdf_selection(self._pdf_anchor, position)
+            if selection is None:
+                self._clear_selection()
+                return
+            self._selection_dragged = True
+            self.selection = selection
+            self._render_pdf()
+            return
+        if not self._sel_anchor:
             return
         position = self._hit_test(event.x, event.y)
         if position is None:
@@ -649,10 +758,76 @@ class ReaderWindow(tk.Toplevel):
             self._show_selection_toolbar(event.x_root, event.y_root)
             self._selection_dragged = False
             self._sel_anchor = None
+            self._pdf_anchor = None
             return
         self._selection_dragged = False
         self._sel_anchor = None
+        self._pdf_anchor = None
         self._on_canvas_click(event)
+
+    def _pdf_hit_word(self, x: float, y: float) -> int | None:
+        if not self.is_pdf or not self.pdf or not self._pdf_geom:
+            return None
+        g = self._pdf_geom
+        if not (g["x"] - 4 <= x <= g["x"] + g["w"] + 4
+                and g["y"] - 4 <= y <= g["y"] + g["h"] + 4):
+            return None
+        px = (x - g["x"]) / max(1, g["w"]) * g["pw"]
+        py = (y - g["y"]) / max(1, g["h"]) * g["ph"]
+        words = self.pdf.words(self.page_index)
+        if not words:
+            return None
+        best = None
+        for index, word in enumerate(words):
+            x0, y0, x1, y1 = word[0], word[1], word[2], word[3]
+            if x0 - 2 <= px <= x1 + 2 and y0 - 2 <= py <= y1 + 2:
+                return index
+            cx = (x0 + x1) / 2
+            cy = (y0 + y1) / 2
+            distance = (px - cx) ** 2 + (py - cy) ** 2
+            if best is None or distance < best[0]:
+                best = (distance, index)
+        return best[1] if best is not None else None
+
+    def _make_pdf_selection(self, start: int, end: int) -> dict | None:
+        if not self.is_pdf or not self.pdf or not self._pdf_geom:
+            return None
+        if start > end:
+            start, end = end, start
+        words = self.pdf.words(self.page_index)
+        if not words:
+            return None
+        g = self._pdf_geom
+        pw = max(1.0, g["pw"])
+        ph = max(1.0, g["ph"])
+        parts: list[str] = []
+        rects: list[list[float]] = []
+        last_line = None
+        for index in range(start, end + 1):
+            x0, y0, x1, y1, text, block, line, _word = words[index]
+            if last_line is not None and (block, line) != last_line:
+                parts.append("\n")
+            elif parts and parts[-1] != "\n":
+                parts.append(" ")
+            parts.append(text)
+            last_line = (block, line)
+            rects.append([
+                max(0.0, min(1.0, x0 / pw)),
+                max(0.0, min(1.0, y0 / ph)),
+                max(0.0, min(1.0, x1 / pw)),
+                max(0.0, min(1.0, y1 / ph)),
+            ])
+        quote = "".join(parts).strip()
+        if not quote:
+            return None
+        return {
+            "kind": "pdf",
+            "page": self.page_index,
+            "start_word": start,
+            "end_word": end,
+            "rects": rects,
+            "quote": quote[:4000],
+        }
 
     def _hit_test(self, x: float, y: float) -> tuple[int, int] | None:
         if self.is_pdf or not self.result or not self.pages:
@@ -815,6 +990,8 @@ class ReaderWindow(tk.Toplevel):
         except tk.TclError:
             pass
         self._hide_selection_toolbar()
+        if self.is_pdf and self._ready and self.pdf:
+            self._render_pdf()
 
     def _selection_action(self, action: str) -> None:
         if not self.selection:
@@ -869,10 +1046,19 @@ class ReaderWindow(tk.Toplevel):
             return
         selection = self.selection
         try:
-            self.db.add_annotation(
-                self.book_id, color, selection["start_block"], selection["start_offset"],
-                selection["end_block"], selection["end_offset"], selection["quote"], comment,
-            )
+            if selection.get("kind") == "pdf":
+                self.db.add_annotation(
+                    self.book_id, color, -1, 0, -1, 0, selection["quote"], comment,
+                    page=int(selection.get("page", -1)),
+                    rects=json.dumps(selection.get("rects", []), ensure_ascii=False),
+                    kind="pdf",
+                )
+            else:
+                self.db.add_annotation(
+                    self.book_id, color, selection["start_block"], selection["start_offset"],
+                    selection["end_block"], selection["end_offset"], selection["quote"], comment,
+                    page=self.page_index, kind="text",
+                )
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Заметка", str(exc), parent=self)
             return
@@ -905,7 +1091,9 @@ class ReaderWindow(tk.Toplevel):
             self.annotations = self.db.annotations(self.book_id)
         except Exception:
             self.annotations = []
-        if self.pages and not self.is_pdf:
+        if self.is_pdf:
+            self._render_pdf()
+        elif self.pages:
             self._render_text()
         if self.panel_name == "notes":
             self._populate_notes()
@@ -1438,15 +1626,6 @@ class ReaderWindow(tk.Toplevel):
         for child in self.notes_body.winfo_children():
             child.destroy()
         palette = self.palette
-        if self.is_pdf:
-            tk.Label(
-                self.notes_body,
-                text="В PDF выделение текста пока не поддерживается.\n"
-                     "Заметки доступны для FB2, EPUB и TXT.",
-                bg=palette.panel, fg=palette.muted, font=(UI, 9),
-                justify="center",
-            ).pack(pady=30)
-            return
         if not self.annotations:
             tk.Label(
                 self.notes_body,
@@ -1458,9 +1637,13 @@ class ReaderWindow(tk.Toplevel):
         scroll = ScrollFrame(self.notes_body, palette, bg=palette.panel)
         scroll.pack(fill="both", expand=True)
         for annotation in self.annotations:
-            block = int(annotation["start_block"])
-            page = self.result.page_for_block(block) + 1 if self.result else 0
-            chapter = self.result.chapter_for_block(block) if self.result else ""
+            if self.is_pdf:
+                page = int(annotation["page"] or 0) + 1
+                chapter = self._chapter_at_page(page - 1)
+            else:
+                block = int(annotation["start_block"])
+                page = self.result.page_for_block(block) + 1 if self.result else 0
+                chapter = self.result.chapter_for_block(block) if self.result else ""
             row = tk.Frame(scroll.inner, bg=palette.panel, cursor="hand2")
             row.pack(fill="x", pady=2)
             swatch = tk.Canvas(row, width=5, height=74, bg=palette.panel,
@@ -1487,7 +1670,11 @@ class ReaderWindow(tk.Toplevel):
                     wraplength=220,
                 )
                 comment_label.pack(fill="x")
-            meta = f"{chapter or 'Без главы'}  ·  стр. {page}"
+            color_label = NOTE_COLOR_LABELS.get(str(annotation["color"]), "маркер")
+            if self.is_pdf:
+                meta = f"{chapter} · {color_label}"
+            else:
+                meta = f"{chapter or 'Без главы'}  ·  стр. {page}"
             meta_label = tk.Label(
                 text_box, text=ellipsis(meta, 44), bg=palette.panel, fg=palette.dim,
                 font=(UI, 7), anchor="w",
@@ -1504,11 +1691,21 @@ class ReaderWindow(tk.Toplevel):
                 side="right", padx=0
             )
             for widget in (row, text_box, quote_label, meta_label):
-                widget.bind("<Button-1>", lambda _e, b=block: self._jump_to_block(b))
+                widget.bind("<Button-1>", lambda _e, a=annotation: self._jump_to_annotation(a))
             if comment_label is not None:
                 comment_label.bind(
-                    "<Button-1>", lambda _e, b=block: self._jump_to_block(b)
+                    "<Button-1>", lambda _e, a=annotation: self._jump_to_annotation(a)
                 )
+
+    def _jump_to_annotation(self, annotation) -> None:
+        self._close_panel()
+        if self.is_pdf:
+            page = int(annotation["page"] or 0)
+        elif self.result:
+            page = self.result.page_for_block(int(annotation["start_block"]))
+        else:
+            page = 0
+        self.go_to_page(page, add_history=True)
 
     def _jump_to_block(self, block: int) -> None:
         self._close_panel()
@@ -1541,9 +1738,13 @@ class ReaderWindow(tk.Toplevel):
         lines += [f"*Экспорт: {date.today():%d.%m.%Y}*", ""]
         current_chapter = None
         for annotation in self.annotations:
-            block = int(annotation["start_block"])
-            chapter = self.result.chapter_for_block(block) if self.result else ""
-            page = self.result.page_for_block(block) + 1 if self.result else 0
+            if self.is_pdf:
+                page = int(annotation["page"] or 0) + 1
+                chapter = self._chapter_at_page(page - 1)
+            else:
+                block = int(annotation["start_block"])
+                chapter = self.result.chapter_for_block(block) if self.result else ""
+                page = self.result.page_for_block(block) + 1 if self.result else 0
             if chapter and chapter != current_chapter:
                 lines += [f"## {chapter}", ""]
                 current_chapter = chapter

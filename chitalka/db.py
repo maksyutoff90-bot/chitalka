@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS annotations (
     end_offset   INTEGER NOT NULL DEFAULT 0,
     quote        TEXT NOT NULL DEFAULT '',
     comment      TEXT NOT NULL DEFAULT '',
+    page         INTEGER NOT NULL DEFAULT -1,
+    rects        TEXT NOT NULL DEFAULT '',
+    kind         TEXT NOT NULL DEFAULT 'text',
     created_at   TEXT NOT NULL DEFAULT '',
     updated_at   TEXT NOT NULL DEFAULT ''
 );
@@ -132,7 +135,22 @@ class LibraryDB:
     def init(self) -> None:
         with self._lock:
             self.conn.executescript(SCHEMA)
+            self._migrate_annotations()
             self.conn.commit()
+
+    def _migrate_annotations(self) -> None:
+        """Добавляет поля для заметок PDF в уже существующую базу."""
+        columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(annotations)")
+        }
+        additions = {
+            "page": "INTEGER NOT NULL DEFAULT -1",
+            "rects": "TEXT NOT NULL DEFAULT ''",
+            "kind": "TEXT NOT NULL DEFAULT 'text'",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE annotations ADD COLUMN {name} {ddl}")
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -370,22 +388,34 @@ class LibraryDB:
     def annotations(self, book_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM annotations WHERE book_id=? "
-            "ORDER BY start_block, start_offset, created_at",
+            "ORDER BY CASE WHEN page >= 0 THEN page ELSE start_block END, "
+            "start_offset, created_at",
             (int(book_id),),
+        ).fetchall()
+
+    def all_annotations(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT a.*, b.title AS book_title, b.author AS book_author, "
+            "b.format AS book_format "
+            "FROM annotations a JOIN books b ON b.id=a.book_id "
+            "ORDER BY COALESCE(NULLIF(b.last_read_at,''), b.added_at) DESC, "
+            "CASE WHEN a.page >= 0 THEN a.page ELSE a.start_block END, a.start_offset"
         ).fetchall()
 
     def add_annotation(self, book_id: int, color: str, start_block: int,
                        start_offset: int, end_block: int, end_offset: int,
-                       quote: str, comment: str = "") -> int:
+                       quote: str, comment: str = "", *,
+                       page: int = -1, rects: str = "", kind: str = "text") -> int:
         now = _now()
         cur = self.conn.execute(
             "INSERT INTO annotations (book_id, color, start_block, start_offset, "
-            "end_block, end_offset, quote, comment, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "end_block, end_offset, quote, comment, page, rects, kind, "
+            "created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 int(book_id), color, int(start_block), int(start_offset),
                 int(end_block), int(end_offset), quote[:4000], comment[:8000],
-                now, now,
+                int(page), rects, kind, now, now,
             ),
         )
         self.conn.commit()

@@ -399,6 +399,9 @@ class LibraryApp(tk.Tk):
         self.nav_stats = NavItem(self.sidebar, palette, "chart", "Статистика",
                                  self.open_stats)
         self.nav_stats.pack(fill="x", padx=10, pady=1)
+        self.nav_notes = NavItem(self.sidebar, palette, "note", "Заметки",
+                                 self.open_notes)
+        self.nav_notes.pack(fill="x", padx=10, pady=1)
         self.nav_catalogs = NavItem(self.sidebar, palette, "globe", "Каталоги",
                                     self.open_catalogs)
         self.nav_catalogs.pack(fill="x", padx=10, pady=1)
@@ -1006,7 +1009,8 @@ class LibraryApp(tk.Tk):
         self._render_detail()
 
     # ------------------------------------------------------------------ книги
-    def open_book(self, book_id: int | None) -> None:
+    def open_book(self, book_id: int | None, *, start_page: int | None = None,
+                  start_block: int | None = None) -> None:
         if not book_id:
             return
         row = self.db.get(book_id)
@@ -1026,6 +1030,7 @@ class LibraryApp(tk.Tk):
             ReaderWindow(
                 self, row, self.settings, self.db, self.palette, self.cover_cache,
                 on_close=self._reader_closed,
+                start_page=start_page, start_block=start_block,
             )
         except Exception as exc:  # noqa: BLE001
             self.deiconify()
@@ -1047,6 +1052,44 @@ class LibraryApp(tk.Tk):
                     stats.refresh()
             except tk.TclError:
                 self.stats_window = None
+        notes = getattr(self, "notes_window", None)
+        if notes is not None:
+            try:
+                if notes.winfo_exists():
+                    notes.refresh()
+            except tk.TclError:
+                self.notes_window = None
+
+    def open_notes(self) -> None:
+        from .allnotes import NotesWindow
+
+        window = getattr(self, "notes_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.lift()
+                    window.refresh()
+                    return
+            except tk.TclError:
+                pass
+        try:
+            self.notes_window = NotesWindow(
+                self, self.db, self.palette, on_open=self._open_annotation,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Заметки", f"Не удалось открыть заметки:\n{exc}",
+                                 parent=self)
+
+    def _open_annotation(self, book_id: int, annotation) -> None:
+        row = self.db.get(book_id)
+        if not row:
+            return
+        if row["format"] == "pdf":
+            page = max(0, int(annotation["page"] or 0))
+            self.open_book(book_id, start_page=page)
+        else:
+            block = max(0, int(annotation["start_block"] or 0))
+            self.open_book(book_id, start_block=block)
 
     def open_stats(self) -> None:
         from .stats import StatsWindow

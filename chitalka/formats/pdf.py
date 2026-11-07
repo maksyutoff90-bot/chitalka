@@ -77,6 +77,7 @@ class PdfBook:
         self.doc = open_pdf(path)
         self.page_count = int(self.doc.page_count)
         self._text_cache: dict[int, str] = {}
+        self._words_cache: dict[int, list[tuple[float, float, float, float, str, int, int, int]]] = {}
         self._image_cache: dict[tuple[int, int], Image.Image] = {}
 
     def close(self) -> None:
@@ -116,6 +117,31 @@ class PdfBook:
         text = text.replace("\u00ad", "")
         self._text_cache[index] = text
         return text
+
+    def words(self, index: int) -> list[tuple[float, float, float, float, str, int, int, int]]:
+        """Слова с координатами PDF-точки: (x0, y0, x1, y1, text, block, line, word)."""
+        index = max(0, min(self.page_count - 1, int(index)))
+        cached = self._words_cache.get(index)
+        if cached is not None:
+            return cached
+        try:
+            raw = self.doc[index].get_text("words")
+        except Exception:
+            raw = []
+        words = []
+        for item in raw:
+            if len(item) < 8:
+                continue
+            text = str(item[4]).replace("\u00ad", "").strip()
+            if not text:
+                continue
+            words.append((
+                float(item[0]), float(item[1]), float(item[2]), float(item[3]),
+                text, int(item[5]), int(item[6]), int(item[7]),
+            ))
+        words.sort(key=lambda word: (word[5], word[6], word[7]))
+        self._words_cache[index] = words
+        return words
 
     def render(self, index: int, zoom: float = 1.5) -> Image.Image:
         index = max(0, min(self.page_count - 1, int(index)))
