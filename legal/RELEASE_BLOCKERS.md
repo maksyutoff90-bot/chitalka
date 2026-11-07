@@ -5,11 +5,11 @@
 ## 1. PDF
 
 - [x] PyMuPDF удалён из runtime;
+- [x] PyMuPDF удалён из `tools/make_samples.py`;
 - [x] PDF переведён на **pypdfium2 / PDFium**;
 - [x] лицензии: pypdfium2 — Apache-2.0, PDFium — BSD-3-Clause;
 - [ ] проверить лицензии конкретной установленной версии pypdfium2/PDFium
-  перед релизом;
-- [ ] при желании оставить `tools/make_samples.py` вне поставки (dev-only).
+  перед релизом.
 
 ## 2. FreeDict / WikDict
 

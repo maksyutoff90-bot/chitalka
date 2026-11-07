@@ -320,122 +320,6 @@ def build_txt(data: dict, target: Path) -> None:
 
 
 # ------------------------------------------------------------------------ PDF
-def build_pdf(data: dict, target: Path, cover: Path) -> None:
-    import pymupdf as fitz
-
-    font_path = Path("C:/Windows/Fonts/georgia.ttf")
-    bold_path = Path("C:/Windows/Fonts/georgiab.ttf")
-    italic_path = Path("C:/Windows/Fonts/georgiai.ttf")
-    regular = fitz.Font(fontfile=str(font_path))
-    bold = fitz.Font(fontfile=str(bold_path))
-    italic = fitz.Font(fontfile=str(italic_path))
-
-    width, height = 425, 600
-    margin_x, margin_top, margin_bottom = 52, 62, 56
-    content_w = width - 2 * margin_x
-    leading = 15.4
-    font_size = 10.5
-    ink = (0.16, 0.13, 0.10)
-    muted = (0.45, 0.40, 0.34)
-    accent = (0.62, 0.31, 0.15)
-
-    doc = fitz.open()
-
-    def page_setup(page) -> None:
-        page.insert_font(fontname="F0", fontfile=str(font_path))
-        page.insert_font(fontname="F1", fontfile=str(bold_path))
-        page.insert_font(fontname="F2", fontfile=str(italic_path))
-
-    def wrap(text: str, font, size: float, max_width: float) -> list[str]:
-        words = text.split()
-        lines: list[str] = []
-        current = ""
-        for word in words:
-            probe = (current + " " + word).strip()
-            if font.text_length(probe, fontsize=size) <= max_width or not current:
-                current = probe
-            else:
-                lines.append(current)
-                current = word
-        if current:
-            lines.append(current)
-        return lines
-
-    # Титульная страница.
-    page = doc.new_page(width=width, height=height)
-    page_setup(page)
-    page.draw_rect(fitz.Rect(0, 0, width, 10), color=None, fill=accent)
-    page.insert_text((margin_x, 120), "ЧИТАЛКА", fontname="F1", fontsize=10, color=accent)
-    page.insert_text((margin_x, 140), "демонстрационное издание", fontname="F0", fontsize=8.5, color=muted)
-    title_lines = wrap(data["title"], bold, 30, content_w)
-    y = 220
-    for line in title_lines:
-        page.insert_text((margin_x, y), line, fontname="F1", fontsize=30, color=ink)
-        y += 36
-    page.draw_line((margin_x, y + 12), (margin_x + 56, y + 12), color=accent, width=1.2)
-    page.insert_text((margin_x, y + 48), data["author"], fontname="F0", fontsize=13, color=ink)
-    page.insert_text((margin_x, height - 70), f"Общественное достояние · {data.get('year', '')}", fontname="F0", fontsize=8.5, color=muted)
-    page.insert_text((width - margin_x - 26, height - 70), "1", fontname="F0", fontsize=9, color=muted)
-
-    toc: list[list] = []
-    page_number = 1
-    for chapter in data["chapters"]:
-        page = doc.new_page(width=width, height=height)
-        page_setup(page)
-        page_number += 1
-        toc.append([1, chapter["title"], page_number])
-        # Колонтитул.
-        page.insert_text((margin_x, 34), data["title"], fontname="F0", fontsize=7.5, color=muted)
-        page.draw_line((margin_x, 42), (width - margin_x, 42), color=(0.86, 0.82, 0.75), width=0.5)
-        y = margin_top + 30
-        for line in wrap(chapter["title"], bold, 17, content_w):
-            page.insert_text((margin_x, y), line, fontname="F1", fontsize=17, color=ink)
-            y += 23
-        y += 10
-
-        for block in chapter["blocks"]:
-            if y > height - margin_bottom - leading:
-                page = doc.new_page(width=width, height=height)
-                page_setup(page)
-                page_number += 1
-                page.insert_text((margin_x, 34), data["title"], fontname="F0", fontsize=7.5, color=muted)
-                page.draw_line((margin_x, 42), (width - margin_x, 42), color=(0.86, 0.82, 0.75), width=0.5)
-                y = margin_top
-
-            text = block["text"]
-            if block["kind"] == "verse":
-                for line in text.split("\n"):
-                    page.insert_text((margin_x + 22, y), line, fontname="F2", fontsize=9.8, color=ink)
-                    y += leading - 2
-                y += 4
-                continue
-            if block["kind"] == "epigraph":
-                for line in wrap(text, italic, 9.5, content_w - 40):
-                    page.insert_text((margin_x + 40, y), line, fontname="F2", fontsize=9.5, color=muted)
-                    y += leading - 2
-                y += 3
-                continue
-            if block["kind"] == "epigraph_author":
-                author_x = width - margin_x - regular.text_length(text, fontsize=8.5)
-                page.insert_text((author_x, y), text, fontname="F0", fontsize=8.5, color=muted)
-                y += leading
-                continue
-
-            lines = wrap(text, regular, font_size, content_w)
-            for index, line in enumerate(lines):
-                x = margin_x + (18 if index == 0 else 0)
-                page.insert_text((x, y), line, fontname="F0", fontsize=font_size, color=ink)
-                y += leading
-            y += 2.5
-
-        page.insert_text((width / 2 - 4, height - 28), str(page_number), fontname="F0", fontsize=9, color=muted)
-
-    doc.set_metadata({"title": data["title"], "author": data["author"], "subject": "Русская классика"})
-    doc.set_toc(toc)
-    doc.save(str(target), garbage=3, deflate=True)
-    doc.close()
-
-
 def make_poetry_art(path: Path) -> None:
     """Простая акварельная иллюстрация для проверки картинок в книге."""
     width, height = 900, 560
@@ -518,7 +402,6 @@ def main() -> None:
         "Дама с собачкой.epub",
         "После бала.txt",
         "Лев Толстой - После бала.txt",
-        "Ионыч.pdf",
         "Стихи о природе.fb2.zip",
     ]
     if clean:
@@ -550,13 +433,10 @@ def main() -> None:
     build_txt(posle, BOOKS_DIR / "Лев Толстой - После бала.txt")
     print("TXT готов")
 
-    ionych = load("ionych")
-    cover = Path(generate_cover("Ионыч", "Антон Чехов", "Классическая проза"))
-    try:
-        build_pdf(ionych, BOOKS_DIR / "Ионыч.pdf", cover)
-        print("PDF готов")
-    except Exception as exc:
-        print("PDF не собран:", type(exc).__name__, exc)
+    # Ионыч.pdf уже лежит в data/books и не пересобирается: генератор PDF
+    # намеренно не тянет PyMuPDF (AGPL). Для новой PDF используйте отдельный
+    # инструмент с подходящей лицензией.
+    print("PDF оставлен без изменений")
 
     poetry_cover = Path(generate_cover("Стихи о природе", "Пушкин · Лермонтов · Тютчев", "Поэзия"))
     poetry = make_poetry_fb2(poetry_cover)
