@@ -11,7 +11,8 @@
 | Pillow | изображения и обложки | HPND |
 | lxml | FB2/EPUB/XML | BSD-3-Clause |
 | SQLite | база данных | Public Domain |
-| PyMuPDF / MuPDF | PDF | **AGPL-3.0 или коммерческая лицензия Artifex** |
+| pypdfium2 | обёртка PDF | Apache-2.0 |
+| PDFium | PDF-движок | BSD-3-Clause |
 | tkinterdnd2 | drag-and-drop | MIT (проверьте версию) |
 | PyInstaller | сборка exe | GPL-2.0+ с исключением для сборок |
 
@@ -39,9 +40,10 @@
 
 ## Важно перед коммерческим релизом
 
-1. **PyMuPDF** распространяется по AGPL-3.0. Для закрытой коммерческой сборки
-   нужна коммерческая лицензия Artifex, замена PDF-движка или открытие кода
-   приложения под AGPL.
+1. **PDF**: приложение работает на PDFium через `pypdfium2` (Apache-2.0 /
+   BSD-3-Clause). PyMuPDF в runtime больше не используется.
+   `tools/make_samples.py` — необязательный dev-инструмент; для него может
+   понадобиться отдельная PDF-библиотека, в поставку он не входит.
 2. **FreeDict** требует атрибуции и соблюдения CC BY-SA 3.0.
 3. **MyMemory** в бесплатном режиме имеет лимиты; для продажи используйте
    DeepL/LibreTranslate или платный тариф.

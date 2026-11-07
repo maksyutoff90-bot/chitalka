@@ -1,4 +1,4 @@
-"""PDF: метаданные, обложка, постраничный рендер и поиск (PyMuPDF)."""
+"""PDF: метаданные, обложка, постраничный рендер и поиск (PDFium)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,8 @@ from PIL import Image
 from ..covers import save_cover_bytes
 from .model import Chapter, Document, clean_text
 
-try:  # PyMuPDF 1.24+ умеет и `fitz`, и `pymupdf`
-    import pymupdf as fitz  # type: ignore
-except Exception:  # pragma: no cover
-    import fitz  # type: ignore
+import pypdfium2 as pdfium
+from pypdfium2 import PdfiumError
 
 
 def _year(value: str) -> str:
@@ -22,34 +20,54 @@ def _year(value: str) -> str:
 
 
 def open_pdf(path: Path):
-    doc = fitz.open(str(path))
-    if doc.needs_pass:
-        raise ValueError("PDF защищён паролем")
-    return doc
+    try:
+        return pdfium.PdfDocument(str(path))
+    except PdfiumError as exc:
+        message = str(exc).lower()
+        if "password" in message or "pass" in message:
+            raise ValueError("PDF защищён паролем") from exc
+        raise
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc).lower()
+        if "password" in message or "pass" in message:
+            raise ValueError("PDF защищён паролем") from exc
+        raise
+
+
+def _page_count(doc) -> int:
+    return int(len(doc))
 
 
 def render_cover(path: Path) -> str:
     doc = open_pdf(path)
     try:
-        if doc.page_count == 0:
+        if _page_count(doc) == 0:
             return ""
-        page = doc[0]
-        height = max(1.0, page.rect.height)
-        zoom = min(3.0, 1000.0 / height)
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        return save_cover_bytes(path, pix.tobytes("png"))
+        page = doc.get_page(0)
+        width, height = page.get_size()
+        scale = min(3.0, 1000.0 / max(1.0, float(height)))
+        image = page.render(scale=scale).to_pil()
+        return save_cover_bytes(path, _png_bytes(image))
     finally:
         doc.close()
+
+
+def _png_bytes(image: Image.Image) -> bytes:
+    from io import BytesIO
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def parse_meta(path: Path) -> dict:
     doc = open_pdf(path)
     try:
-        meta = doc.metadata or {}
-        title = clean_text(meta.get("title", "")) or path.stem
-        author = clean_text(meta.get("author", ""))
-        description = clean_text(meta.get("subject", ""), 1000)
-        year = _year(meta.get("creationDate", ""))
+        meta = doc.get_metadata_dict() or {}
+        title = clean_text(meta.get("Title", "")) or path.stem
+        author = clean_text(meta.get("Author", ""))
+        description = clean_text(meta.get("Subject", ""), 1000)
+        year = _year(meta.get("CreationDate", ""))
         stat = path.stat()
         return {
             "path": str(path),
@@ -70,15 +88,16 @@ def parse_meta(path: Path) -> dict:
 
 
 class PdfBook:
-    """Ленивая обёртка для чтения PDF."""
+    """Ленивая обёртка для чтения PDF через PDFium."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.doc = open_pdf(path)
-        self.page_count = int(self.doc.page_count)
+        self.page_count = _page_count(self.doc)
         self._text_cache: dict[int, str] = {}
         self._words_cache: dict[int, list[tuple[float, float, float, float, str, int, int, int]]] = {}
         self._image_cache: dict[tuple[int, int], Image.Image] = {}
+        self._size_cache: dict[int, tuple[float, float]] = {}
 
     def close(self) -> None:
         try:
@@ -87,59 +106,142 @@ class PdfBook:
             pass
 
     def title(self) -> str:
-        meta = self.doc.metadata or {}
-        return clean_text(meta.get("title", "")) or self.path.stem
+        meta = self.doc.get_metadata_dict() or {}
+        return clean_text(meta.get("Title", "")) or self.path.stem
+
+    def page_size(self, index: int) -> tuple[float, float]:
+        index = max(0, min(self.page_count - 1, int(index)))
+        cached = self._size_cache.get(index)
+        if cached is not None:
+            return cached
+        try:
+            size = self.doc.get_page_size(index)
+            result = (float(size[0]), float(size[1]))
+        except Exception:
+            result = (595.0, 842.0)
+        self._size_cache[index] = result
+        return result
+
+    def _textpage(self, index: int):
+        index = max(0, min(self.page_count - 1, int(index)))
+        page = self.doc.get_page(index)
+        return page, page.get_textpage()
 
     def chapters(self) -> list[Chapter]:
         chapters: list[Chapter] = []
         try:
-            toc = self.doc.get_toc(simple=True)
+            bookmarks = list(self.doc.get_toc())
         except Exception:
-            toc = []
-        for level, title, page in toc:
-            title = clean_text(title, 300)
+            bookmarks = []
+        for bookmark in bookmarks:
+            try:
+                title = clean_text(bookmark.get_title(), 300)
+            except Exception:
+                continue
             if not title:
                 continue
-            chapters.append(
-                Chapter(title, max(1, int(page)) - 1, max(1, min(int(level), 4)), "")
-            )
+            try:
+                page = int(bookmark.get_dest().get_index())
+            except Exception:
+                page = 0
+            level = max(1, min(int(getattr(bookmark, "level", 0)) + 1, 4))
+            chapters.append(Chapter(title, max(0, page), level, ""))
         if not chapters:
             chapters.append(Chapter("Страница 1", 0, 1, ""))
         return chapters
 
     def page_text(self, index: int) -> str:
+        index = max(0, min(self.page_count - 1, int(index)))
         if index in self._text_cache:
             return self._text_cache[index]
+        page = textpage = None
         try:
-            text = self.doc[index].get_text("text")
+            page, textpage = self._textpage(index)
+            text = textpage.get_text_range()
         except Exception:
             text = ""
-        text = text.replace("\u00ad", "")
+        finally:
+            for item in (textpage, page):
+                if item is not None:
+                    try:
+                        item.close()
+                    except Exception:
+                        pass
+        text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        text = text.replace("\u00ad", "").replace("\xa0", " ")
         self._text_cache[index] = text
         return text
 
     def words(self, index: int) -> list[tuple[float, float, float, float, str, int, int, int]]:
-        """Слова с координатами PDF-точки: (x0, y0, x1, y1, text, block, line, word)."""
+        """Слова в координатах PDF-точки: (x0, y0, x1, y1, text, block, line, word).
+
+        PDFium отдаёт координаты с началом в левом нижнем углу; читалка
+        работает с экранными координатами, поэтому Y переворачивается.
+        """
         index = max(0, min(self.page_count - 1, int(index)))
         cached = self._words_cache.get(index)
         if cached is not None:
             return cached
+        page = textpage = None
+        words: list[tuple[float, float, float, float, str, int, int, int]] = []
         try:
-            raw = self.doc[index].get_text("words")
+            page, textpage = self._textpage(index)
+            count = int(textpage.count_chars())
+            text = textpage.get_text_range()
+            height = self.page_size(index)[1]
+            line = 0
+            last_top: float | None = None
+            in_word = False
+            x0 = y0 = x1 = y1 = 0.0
+            buffer: list[str] = []
+            word_index = 0
+            for char_index in range(min(count, len(text))):
+                char = text[char_index]
+                if char in "\r\n":
+                    char = " "
+                try:
+                    box = textpage.get_charbox(char_index)
+                except Exception:
+                    box = None
+                if box is None:
+                    continue
+                left, bottom, right, top = (float(v) for v in box)
+                if not char.isspace():
+                    if last_top is None or abs(top - last_top) > 2.0:
+                        line += 1
+                        last_top = top
+                        word_index = 0
+                    if not in_word:
+                        in_word = True
+                        word_index += 1
+                        x0, y0, x1, y1 = left, height - top, right, height - bottom
+                        buffer = []
+                    else:
+                        x0 = min(x0, left)
+                        y0 = min(y0, height - top)
+                        x1 = max(x1, right)
+                        y1 = max(y1, height - bottom)
+                    buffer.append(char)
+                elif in_word:
+                    value = "".join(buffer).replace("\u00ad", "").strip()
+                    if value:
+                        words.append((x0, y0, x1, y1, value, 0, line, word_index))
+                    in_word = False
+                    buffer = []
+            if in_word:
+                value = "".join(buffer).replace("\u00ad", "").strip()
+                if value:
+                    words.append((x0, y0, x1, y1, value, 0, line, word_index))
         except Exception:
-            raw = []
-        words = []
-        for item in raw:
-            if len(item) < 8:
-                continue
-            text = str(item[4]).replace("\u00ad", "").strip()
-            if not text:
-                continue
-            words.append((
-                float(item[0]), float(item[1]), float(item[2]), float(item[3]),
-                text, int(item[5]), int(item[6]), int(item[7]),
-            ))
-        words.sort(key=lambda word: (word[5], word[6], word[7]))
+            words = []
+        finally:
+            for item in (textpage, page):
+                if item is not None:
+                    try:
+                        item.close()
+                    except Exception:
+                        pass
+        words.sort(key=lambda word: (word[6], word[7]))
         self._words_cache[index] = words
         return words
 
@@ -149,9 +251,14 @@ class PdfBook:
         cached = self._image_cache.get(key)
         if cached is not None:
             return cached
-        page = self.doc[index]
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        page = self.doc.get_page(index)
+        try:
+            image = page.render(scale=max(0.1, float(zoom))).to_pil()
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
         if len(self._image_cache) > 12:
             self._image_cache.pop(next(iter(self._image_cache)))
         self._image_cache[key] = image

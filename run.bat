@@ -35,7 +35,7 @@ if not defined PY (
 )
 
 rem 3. Check dependencies and install them on first run.
-%PY% -c "import PIL, pymupdf, lxml" >nul 2>nul
+%PY% -c "import PIL, pypdfium2, lxml, tkinterdnd2" >nul 2>nul
 if errorlevel 1 (
     echo   First run: installing dependencies...
     %PY% -m pip install --disable-pip-version-check --quiet -r requirements.txt

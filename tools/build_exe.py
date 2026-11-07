@@ -36,7 +36,7 @@ def main() -> int:
         "--distpath", str(ROOT / "dist"),
         "--workpath", str(BUILD / "work"),
         "--specpath", str(BUILD),
-        "--collect-all", "pymupdf",
+        "--collect-all", "pypdfium2",
         "--collect-all", "lxml",
         "--collect-all", "tkinterdnd2",
         "--add-data", f"{icon};data",

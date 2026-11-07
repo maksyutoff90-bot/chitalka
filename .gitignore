@@ -35,9 +35,9 @@ data/*.tar.xz
 data/sample_*
 
 # Тестовые артефакты
-test_*_tmp.py
-test_*.py
-probe_*_tmp.py
+/test_*_tmp.py
+/test_*.py
+/probe_*_tmp.py
 
 # Прочее
 *.log

@@ -526,11 +526,11 @@ class ReaderWindow(tk.Toplevel):
         panel_w = 350 if self.panel is not None else 0
         avail_w = max(320, cw - panel_w)
         try:
-            page = self.pdf.doc[self.page_index]
+            pw_pt, ph_pt = self.pdf.page_size(self.page_index)
         except Exception:
             return
-        pw_pt = float(page.rect.width or 1)
-        ph_pt = float(page.rect.height or 1)
+        pw_pt = float(pw_pt or 1)
+        ph_pt = float(ph_pt or 1)
         max_w = avail_w - 48
         max_h = ch - 46
         zoom = min(max_w / pw_pt, max_h / ph_pt)
