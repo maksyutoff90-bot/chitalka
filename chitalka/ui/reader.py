@@ -1022,7 +1022,7 @@ class ReaderWindow(tk.Toplevel):
         self._lookup_window = LookupWindow(
             self, self.palette, self.selection["quote"], mode=mode,
             on_close=lambda: setattr(self, "_lookup_window", None),
-            cache=self.db,
+            cache=self.db, settings=self.settings,
         )
 
     def _quick_highlight(self) -> None:

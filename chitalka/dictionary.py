@@ -7,6 +7,7 @@ import html
 import json
 import re
 import urllib.parse
+import urllib.request
 
 from . import offline_dict, opds
 
@@ -96,19 +97,67 @@ def _fetch_json(url: str, max_bytes: int = 3 * 1024 * 1024) -> dict | list:
         raise DictionaryError(f"Сервис вернул не JSON: {exc}") from exc
 
 
+def _post_json(url: str, payload: dict, headers: dict | None = None) -> dict | list:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+            **(headers or {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read(3 * 1024 * 1024)
+    except Exception as exc:  # noqa: BLE001
+        raise DictionaryError(f"Переводчик недоступен: {exc}") from exc
+    try:
+        return json.loads(data.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise DictionaryError(f"Переводчик вернул не JSON: {exc}") from exc
+
+
+def _post_form(url: str, payload: dict, headers: dict | None = None) -> dict | list:
+    body = urllib.parse.urlencode(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+            **(headers or {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read(3 * 1024 * 1024)
+    except Exception as exc:  # noqa: BLE001
+        raise DictionaryError(f"Переводчик недоступен: {exc}") from exc
+    try:
+        return json.loads(data.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise DictionaryError(f"Переводчик вернул не JSON: {exc}") from exc
+
+
 def translate(text: str, source: str, target: str, *, cache=None,
-              with_source: bool = False):
+              with_source: bool = False, provider: str = "offline",
+              endpoint: str = "", api_key: str = "", email: str = ""):
     text = " ".join((text or "").split())
     if not text:
         raise DictionaryError("Нет текста для перевода")
     if source == target:
         return (text, "без перевода") if with_source else text
     query = text[:500]
-    cache_key = _cache_key("translate", f"{source}|{target}|{query.lower()}")
+    provider = (provider or "offline").lower()
+    cache_key = _cache_key(
+        "translate", f"{provider}|{endpoint}|{source}|{target}|{query.lower()}"
+    )
     cached = _cache_read(cache, cache_key)
     if cached:
         return (cached, "кэш") if with_source else cached
-    memory_key = ("translate", query, source, target)
+    memory_key = ("translate", provider, endpoint, query, source, target)
     memory = _CACHE.get(memory_key)
     if memory:
         return (str(memory), "кэш") if with_source else str(memory)
@@ -123,40 +172,69 @@ def translate(text: str, source: str, target: str, *, cache=None,
                 _cache_write(cache, cache_key, offline_result)
                 return (offline_result, "офлайн") if with_source else offline_result
 
+    if provider in ("", "offline", "none"):
+        raise DictionaryError(
+            "Онлайн-перевод не настроен. Одиночные слова переводятся офлайн; "
+            "для фраз выберите DeepL или LibreTranslate в настройках перевода."
+        )
+
     result = ""
     origin = "онлайн"
     try:
-        url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode({
-            "q": query,
-            "langpair": f"{source}|{target}",
-        })
-        try:
+        if provider == "deepl":
+            if not api_key:
+                raise DictionaryError("Для DeepL нужен API-ключ")
+            url = endpoint or "https://api-free.deepl.com/v2/translate"
+            payload = _post_form(
+                url,
+                {
+                    "text": query,
+                    "source_lang": source.upper(),
+                    "target_lang": target.upper(),
+                },
+                headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+            )
+            translations = payload.get("translations") or []
+            result = str(translations[0].get("text") or "").strip() if translations else ""
+            origin = "DeepL"
+        elif provider == "libre":
+            if not endpoint:
+                raise DictionaryError("Укажите адрес LibreTranslate")
+            url = endpoint.rstrip("/")
+            if not url.endswith("/translate"):
+                url += "/translate"
+            payload = _post_json(
+                url,
+                {"q": query, "source": source, "target": target, "format": "text",
+                 **({"api_key": api_key} if api_key else {})},
+            )
+            result = str(payload.get("translatedText") or "").strip()
+            origin = "LibreTranslate"
+        elif provider == "mymemory":
+            url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode({
+                "q": query,
+                "langpair": f"{source}|{target}",
+                **({"de": email} if email else {}),
+            })
             payload = _fetch_json(url)
             result = ((payload.get("responseData") or {}).get("translatedText") or "").strip()
             result = html.unescape(result)
-            if not result or "MYMEMORY WARNING" in result.upper():
-                raise DictionaryError("Переводчик не вернул результат")
-        except Exception:
-            # Резервный открытый endpoint Google Translate.
-            url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
-                "client": "gtx", "sl": source, "tl": target, "dt": "t", "q": query,
-            })
-            payload = _fetch_json(url)
-            result = "".join(
-                str(piece[0]) for piece in (payload[0] or []) if piece and piece[0]
-            ).strip()
-            if not result:
-                raise DictionaryError("Переводчик не вернул результат")
+            origin = "MyMemory"
+        else:
+            raise DictionaryError(f"Неизвестный переводчик: {provider}")
+        if not result or "MYMEMORY WARNING" in result.upper():
+            raise DictionaryError("Переводчик не вернул результат")
     except Exception as exc:  # noqa: BLE001
-        # Офлайн-запас: словарная статья для одного слова.
         local = None
         if len(query.split()) == 1:
             local = offline_dict.offline_lookup(normalize_word(query), source)
         if local:
-            result = _offline_translation(local, target)
-            origin = "офлайн"
+            fallback = _offline_translation(local, target)
+            if fallback:
+                result = fallback
+                origin = "офлайн"
         if not result:
-            raise DictionaryError(f"Не удалось перевести: {exc}") from exc
+            raise DictionaryError(str(exc) if str(exc) else "Не удалось перевести") from exc
 
     _CACHE[memory_key] = result
     _cache_write(cache, cache_key, result)

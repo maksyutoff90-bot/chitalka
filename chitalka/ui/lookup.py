@@ -5,10 +5,12 @@ from __future__ import annotations
 import queue
 import tkinter as tk
 import webbrowser
+from tkinter import messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from .. import dictionary
+from ..config import Settings, load_settings
 from ..theme import Palette
 from .icons import draw_icon
 from .widgets import IconButton, PillButton, round_rect
@@ -20,13 +22,14 @@ SERIF = "Georgia"
 class LookupWindow(tk.Toplevel):
     def __init__(self, master, palette: Palette, text: str, *,
                  mode: str = "both", on_close: Callable | None = None,
-                 cache=None) -> None:
+                 cache=None, settings: Settings | None = None) -> None:
         super().__init__(master)
         self.palette = palette
         self.text = " ".join((text or "").split())
         self.source, self.target = dictionary.source_pair(self.text)
         self.mode = mode
         self.cache = cache
+        self.settings = settings or load_settings()
         self.queue: queue.Queue = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.closed = False
@@ -92,12 +95,19 @@ class LookupWindow(tk.Toplevel):
         PillButton(actions, palette, "Открыть в браузере", self._open_browser,
                    kind="ghost", height=30, font_size=8, bg=palette.panel).pack(side="right")
 
-        self.footer = tk.Label(self, text="Офлайн-словарь FreeDict", bg=palette.panel,
-                               fg=palette.dim, font=(UI, 7), anchor="w")
+        self.footer = tk.Frame(self, bg=palette.panel)
         self.footer.pack(side="bottom", fill="x", padx=20, pady=(0, 10))
+        self.footer_label = tk.Label(self.footer, text="Офлайн-словарь FreeDict",
+                                     bg=palette.panel, fg=palette.dim,
+                                     font=(UI, 7), anchor="w")
+        self.footer_label.pack(side="left", fill="x", expand=True)
+        link = tk.Label(self.footer, text="Настроить перевод", bg=palette.panel,
+                        fg=palette.accent, font=(UI, 7, "bold"), cursor="hand2")
+        link.pack(side="right")
+        link.bind("<Button-1>", lambda _e: self._open_translation_settings())
         if self.cache is not None:
             try:
-                self.footer.configure(
+                self.footer_label.configure(
                     text=f"Офлайн-словарь FreeDict · кэш: {self.cache.cache_count()}"
                 )
             except Exception:
@@ -142,13 +152,14 @@ class LookupWindow(tk.Toplevel):
         self._set_dictionary([], "Ищу слово…")
         source, target = self.source, self.target
         text = self.text
+        config = self._translation_kwargs()
         self._request_id += 1
         request = self._request_id
 
         def translation_worker() -> None:
             try:
                 value = dictionary.translate(
-                    text, source, target, cache=self.cache, with_source=True
+                    text, source, target, cache=self.cache, with_source=True, **config
                 )
                 self.queue.put(("translation", value, "", request))
             except Exception as exc:  # noqa: BLE001
@@ -163,6 +174,20 @@ class LookupWindow(tk.Toplevel):
 
         self.executor.submit(translation_worker)
         self.executor.submit(dictionary_worker)
+
+    def _translation_kwargs(self) -> dict:
+        return {
+            "provider": str(getattr(self.settings, "translation_provider", "offline") or "offline"),
+            "endpoint": str(getattr(self.settings, "translation_endpoint", "") or ""),
+            "api_key": str(getattr(self.settings, "translation_key", "") or ""),
+            "email": str(getattr(self.settings, "translation_email", "") or ""),
+        }
+
+    def _open_translation_settings(self) -> None:
+        dialog = TranslationSettingsDialog(self, self.palette, self.settings)
+        self.wait_window(dialog)
+        if dialog.saved:
+            self._start()
 
     def _swap(self) -> None:
         self.source, self.target = self.target, self.source
@@ -197,8 +222,8 @@ class LookupWindow(tk.Toplevel):
                     continue
                 if kind == "translation":
                     if error:
-                        self._set_translation("", "Ошибка")
-                        self.trans_status.configure(text=error[:60])
+                        status = "не настроен" if "не настроен" in error.lower() else "ошибка"
+                        self._set_translation(error, status)
                     else:
                         if isinstance(value, tuple):
                             translation, origin = value
@@ -226,7 +251,7 @@ class LookupWindow(tk.Toplevel):
                         self._set_dictionary(value.get("definitions") or [], "")
                         if self.cache is not None:
                             try:
-                                self.footer.configure(
+                                self.footer_label.configure(
                                     text=f"Офлайн-словарь FreeDict · кэш: {self.cache.cache_count()}"
                                 )
                             except Exception:
@@ -241,7 +266,7 @@ class LookupWindow(tk.Toplevel):
         try:
             self.clipboard_clear()
             self.clipboard_append(self._translation)
-            self.footer.configure(text="Перевод скопирован")
+            self.footer_label.configure(text="Перевод скопирован")
         except tk.TclError:
             pass
 
@@ -275,3 +300,111 @@ class LookupWindow(tk.Toplevel):
             self.destroy()
         except tk.TclError:
             pass
+
+
+class TranslationSettingsDialog(tk.Toplevel):
+    PROVIDERS = [
+        ("offline", "Только офлайн-словарь"),
+        ("deepl", "DeepL API"),
+        ("libre", "LibreTranslate"),
+        ("mymemory", "MyMemory (ограниченный тариф)"),
+    ]
+
+    def __init__(self, master, palette: Palette, settings) -> None:
+        super().__init__(master)
+        self.palette = palette
+        self.settings = settings
+        self.saved = False
+        self.title("Настройки перевода")
+        self.configure(bg=palette.panel)
+        self.resizable(False, False)
+        self.transient(master)
+        self.grab_set()
+        self.geometry("560x470")
+        self._build()
+
+    def _build(self) -> None:
+        palette = self.palette
+        wrap = tk.Frame(self, bg=palette.panel, padx=24, pady=20)
+        wrap.pack(fill="both", expand=True)
+        tk.Label(wrap, text="Онлайн-перевод", bg=palette.panel, fg=palette.text,
+                 font=(SERIF, 16, "bold"), anchor="w").pack(fill="x")
+        tk.Label(
+            wrap,
+            text="Офлайн-словарь работает всегда. Для перевода фраз выберите сервис, "
+                 "условия которого подходят для продажи: DeepL API или собственный "
+                 "LibreTranslate. MyMemory — только для небольших объёмов.",
+            bg=palette.panel, fg=palette.muted, font=(UI, 8), justify="left",
+            wraplength=500, anchor="w",
+        ).pack(fill="x", pady=(4, 12))
+
+        current = str(getattr(self.settings, "translation_provider", "offline") or "offline")
+        labels = [label for _, label in self.PROVIDERS]
+        values = [key for key, _ in self.PROVIDERS]
+        self.provider = ttk.Combobox(
+            wrap, values=labels, state="readonly", style="Chitalka.TCombobox",
+            font=(UI, 9),
+        )
+        self.provider.set(labels[values.index(current)] if current in values else labels[0])
+        self.provider.pack(fill="x", pady=(0, 10))
+
+        self.endpoint = self._entry(wrap, "Адрес API",
+                                    str(getattr(self.settings, "translation_endpoint", "") or ""),
+                                    "Для DeepL можно оставить пустым (free endpoint). "
+                                    "Для LibreTranslate: https://ваш-сервер")
+        self.api_key = self._entry(wrap, "API-ключ",
+                                   str(getattr(self.settings, "translation_key", "") or ""),
+                                   "Ключ DeepL или LibreTranslate. Хранится локально.")
+        self.email = self._entry(wrap, "Email для MyMemory",
+                                 str(getattr(self.settings, "translation_email", "") or ""),
+                                 "Необязательно. Нужен только для увеличения лимита MyMemory.")
+
+        actions = tk.Frame(wrap, bg=palette.panel)
+        actions.pack(fill="x", pady=(16, 0))
+        PillButton(actions, palette, "Отмена", self._cancel, kind="ghost",
+                   height=36, bg=palette.panel).pack(side="right", padx=(8, 0))
+        PillButton(actions, palette, "Сохранить", self._save, kind="primary",
+                   height=36, bg=palette.panel).pack(side="right")
+
+    def _entry(self, master, label: str, value: str, hint: str):
+        palette = self.palette
+        tk.Label(master, text=label.upper(), bg=palette.panel, fg=palette.dim,
+                 font=(UI, 7, "bold"), anchor="w").pack(fill="x", pady=(2, 3))
+        entry = tk.Entry(
+            master, bg=palette.card, fg=palette.text, insertbackground=palette.text,
+            relief="flat", bd=0, font=(UI, 9), highlightthickness=1,
+            highlightbackground=palette.border, highlightcolor=palette.accent,
+        )
+        entry.insert(0, value)
+        entry.pack(fill="x", ipady=7)
+        tk.Label(master, text=hint, bg=palette.panel, fg=palette.dim,
+                 font=(UI, 7), anchor="w", justify="left", wraplength=500).pack(
+            fill="x", pady=(2, 5)
+        )
+        return entry
+
+    def _save(self) -> None:
+        labels = [label for _, label in self.PROVIDERS]
+        values = [key for key, _ in self.PROVIDERS]
+        index = labels.index(self.provider.get()) if self.provider.get() in labels else 0
+        provider = values[index]
+        endpoint = self.endpoint.get().strip()
+        key = self.api_key.get().strip()
+        if provider == "deepl" and not key:
+            messagebox.showerror("Перевод", "Для DeepL укажите API-ключ.", parent=self)
+            return
+        if provider == "libre" and not endpoint:
+            messagebox.showerror("Перевод", "Укажите адрес вашего LibreTranslate.",
+                                 parent=self)
+            return
+        self.settings.translation_provider = provider
+        self.settings.translation_endpoint = endpoint
+        self.settings.translation_key = key
+        self.settings.translation_email = self.email.get().strip()
+        self.settings.save()
+        self.saved = True
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.grab_release()
+        self.destroy()

@@ -97,6 +97,7 @@ def format_for_type(content_type: str) -> str:
         "application/pdf": "pdf",
         "application/x-fictionbook+xml": "fb2",
         "application/fb2+xml": "fb2",
+        "application/fb2+zip": "fb2",
         "application/fb2": "fb2",
         "text/plain": "txt",
         "text/html": "html",

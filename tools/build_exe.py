@@ -40,6 +40,7 @@ def main() -> int:
         "--collect-all", "lxml",
         "--collect-all", "tkinterdnd2",
         "--add-data", f"{icon};data",
+        "--add-data", f"{ROOT / 'legal'};legal",
         str(ROOT / "main.py"),
     ]
     if icon.exists():
@@ -78,6 +79,9 @@ def main() -> int:
                 shutil.copy2(source, target_dict / name)
     if (ROOT / "README.md").exists():
         shutil.copy2(ROOT / "README.md", DIST / "README.md")
+    legal = ROOT / "legal"
+    if legal.exists():
+        shutil.copytree(legal, DIST / "legal", dirs_exist_ok=True)
     print(f"Готово: {DIST / 'Chitalka.exe'}")
     return 0
 

@@ -7,6 +7,7 @@ import os
 import queue
 import subprocess
 import tkinter as tk
+from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
@@ -945,9 +946,61 @@ class LibraryApp(_DND_BASE):
         menu.add_command(label="Обновить библиотеку",
                          command=lambda: self.start_import(self.settings.folders, force=True))
         menu.add_command(label="Убрать отсутствующие", command=self._remove_missing)
+        menu.add_separator()
+        menu.add_command(label="Резервная копия…", command=self.backup_library)
+        menu.add_command(label="Восстановить из копии…", command=self.restore_library)
         x = self.add_button.winfo_rootx()
         y = self.add_button.winfo_rooty() + self.add_button.winfo_height() + 4
         menu.tk_popup(x, y)
+
+    def backup_library(self) -> None:
+        from ..backup import create_backup
+
+        default = f"chitalka-backup-{date.today():%Y-%m-%d}.zip"
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Сохранить резервную копию", defaultextension=".zip",
+            initialfile=default, filetypes=[("Архив", "*.zip")],
+        )
+        if not path:
+            return
+        try:
+            result = create_backup(path)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Резервная копия", f"Не удалось сохранить:\n{exc}",
+                                 parent=self)
+            return
+        self.status_right.configure(text=f"Копия сохранена: {Path(result).name}")
+
+    def restore_library(self) -> None:
+        from ..backup import restore_backup
+
+        path = filedialog.askopenfilename(
+            parent=self, title="Восстановить из резервной копии",
+            filetypes=[("Архив", "*.zip")],
+        )
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Восстановление",
+            "Заменить текущую библиотеку, настройки и обложки данными из копии?\n"
+            "Текущая база будет сохранена рядом как .before-restore.",
+            parent=self,
+        ):
+            return
+        try:
+            self.db.close()
+            restore_backup(path)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Восстановление", f"Не удалось восстановить:\n{exc}",
+                                 parent=self)
+            self.db = LibraryDB()
+            return
+        messagebox.showinfo(
+            "Восстановление",
+            "Библиотека восстановлена. Приложение будет закрыто — запустите его снова.",
+            parent=self,
+        )
+        self.destroy()
 
     def book_menu(self, book_id: int, x: int, y: int) -> None:
         row = self.db.get(book_id)

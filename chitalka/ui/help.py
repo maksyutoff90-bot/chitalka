@@ -113,8 +113,23 @@ class HelpWindow(tk.Toplevel):
 
         footer = tk.Frame(self, bg=palette.bg)
         footer.pack(fill="x", padx=24, pady=14)
+        PillButton(footer, palette, "О программе и лицензиях", self._about,
+                   kind="ghost", height=38, bg=palette.bg).pack(side="left")
         PillButton(footer, palette, "Понятно", self.close, kind="primary",
                    height=38, bg=palette.bg).pack(side="right")
+
+    def _about(self) -> None:
+        from .about import show_about
+
+        window = getattr(self, "_about_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.lift()
+                    return
+            except tk.TclError:
+                pass
+        self._about_window = show_about(self, self.palette)
 
     def _section(self, parent, text: str) -> None:
         tk.Label(parent, text=text, bg=self.palette.bg, fg=self.palette.dim,

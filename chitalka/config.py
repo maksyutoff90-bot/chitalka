@@ -45,6 +45,7 @@ def _is_writable(path: Path) -> bool:
 
 ROOT_DIR = _base_dir()
 BUNDLED_DICT_ARCHIVE = ROOT_DIR / "data" / "dictionaries" / "freedict.sqlite.xz"
+LEGAL_DIR = ROOT_DIR / "legal"
 DATA_DIR = ROOT_DIR / "data"
 if not _is_writable(DATA_DIR):
     DATA_DIR = _fallback_dir()
@@ -95,6 +96,10 @@ class Settings:
     details_open: bool = True
     simple_mode: bool = False
     onboarding_done: bool = False
+    translation_provider: str = "offline"   # offline | deepl | libre | mymemory
+    translation_endpoint: str = ""
+    translation_key: str = ""
+    translation_email: str = ""
 
     def __post_init__(self) -> None:
         if self.folders is None:

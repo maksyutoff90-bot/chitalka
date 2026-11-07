@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Читалка — простая библиотека для Windows</title>
+  <style>
+    :root { color-scheme: dark; --bg:#171513; --panel:#211e1b; --text:#f3ede4;
+            --muted:#b8aa99; --accent:#e49a62; --line:#3a332c; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text);
+           font:16px/1.55 "Segoe UI", system-ui, sans-serif; }
+    .wrap { max-width:1120px; margin:0 auto; padding:0 24px; }
+    header { padding:22px 0; border-bottom:1px solid var(--line); }
+    header .wrap { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .brand { font:700 24px Georgia, serif; letter-spacing:.3px; }
+    .brand span { color:var(--accent); }
+    nav a { color:var(--muted); text-decoration:none; margin-left:22px; }
+    nav a:hover { color:var(--text); }
+    .hero { padding:72px 0 50px; display:grid; grid-template-columns:1.05fr .95fr;
+            gap:44px; align-items:center; }
+    .eyebrow { color:var(--accent); font-size:13px; font-weight:700;
+               letter-spacing:.12em; text-transform:uppercase; }
+    h1 { font:700 clamp(34px, 5vw, 56px)/1.08 Georgia, serif; margin:12px 0 18px; }
+    h1 em { color:var(--accent); font-style:normal; }
+    .lead { color:var(--muted); font-size:18px; max-width:590px; }
+    .cta { display:flex; gap:12px; flex-wrap:wrap; margin-top:26px; }
+    .button { display:inline-block; padding:13px 22px; border-radius:9px;
+              background:var(--accent); color:#1b1510; font-weight:700;
+              text-decoration:none; }
+    .button.ghost { background:transparent; color:var(--text);
+                    border:1px solid var(--line); }
+    .hero img { width:100%; border-radius:12px; border:1px solid var(--line);
+                box-shadow:0 24px 70px #0008; }
+    section { padding:54px 0; border-top:1px solid var(--line); }
+    h2 { font:700 32px Georgia, serif; margin:0 0 8px; }
+    .sub { color:var(--muted); margin:0 0 28px; }
+    .grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:18px; }
+    .card { background:var(--panel); border:1px solid var(--line);
+            border-radius:12px; padding:22px; }
+    .card h3 { margin:0 0 8px; font:700 20px Georgia, serif; }
+    .card p { color:var(--muted); margin:0; }
+    .cards-2 { grid-template-columns:repeat(2, 1fr); }
+    .price { font:700 34px Georgia, serif; margin:10px 0; }
+    .price small { color:var(--muted); font:400 14px "Segoe UI", sans-serif; }
+    ul { padding-left:20px; color:var(--muted); }
+    li { margin:6px 0; }
+    .badge { display:inline-block; padding:3px 9px; border-radius:999px;
+             background:#2d2924; color:var(--accent); font-size:12px; font-weight:700; }
+    footer { padding:30px 0; color:var(--muted); font-size:13px; }
+    @media (max-width: 860px) {
+      .hero { grid-template-columns:1fr; padding-top:42px; }
+      .grid, .cards-2 { grid-template-columns:1fr; }
+      nav { display:none; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">Читалка<span>.</span></div>
+    <nav>
+      <a href="#features">Возможности</a>
+      <a href="#pricing">Тарифы</a>
+      <a href="#faq">Вопросы</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap" style="border:0">
+    <div>
+      <div class="eyebrow">Windows · FB2 · EPUB · PDF · TXT</div>
+      <h1>Библиотека, которая<br><em>не мешает читать</em></h1>
+      <p class="lead">Простая читалка для Windows: свои книги, каталоги Gutenberg
+        и Викитеки, офлайн-словарь, заметки и статистика. Без сложных настроек
+        и без облака, которое решает за вас.</p>
+      <div class="cta">
+        <a class="button" href="#pricing">Скачать бесплатно</a>
+        <a class="button ghost" href="#features">Посмотреть возможности</a>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-top:14px">
+        Portable exe · данные остаются на вашем компьютере
+      </p>
+    </div>
+    <img src="../data/screenshots/library.png" alt="Библиотека Читалки">
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Всё для чтения. Ничего лишнего.</h2>
+      <p class="sub">Три сценария, которые должны работать сразу.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Своя библиотека</h3>
+          <p>FB2, EPUB, PDF и TXT в одном месте. Папки, обложки, поиск,
+             прогресс и кнопка «Продолжить».</p>
+        </div>
+        <div class="card">
+          <h3>Чтение без трения</h3>
+          <p>Постраничная вёрстка, темы, шрифты, полноэкранный режим.
+             Двойной клик по обложке — и вы в книге.</p>
+        </div>
+        <div class="card">
+          <h3>Словарь и заметки</h3>
+          <p>Выделите текст: офлайн-словарь, перевод, маркер, цитата.
+             Все заметки — в одном разделе с экспортом в Markdown.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Для тех, кому Calibre слишком много</h2>
+      <p class="sub">Никакой конвертации, плагинов и каталогизации на 20 экранов.
+        Только книги, чтение и то, что нужно под рукой.</p>
+      <div class="grid cards-2">
+        <div class="card">
+          <span class="badge">Просто</span>
+          <h3>Мастер первого запуска</h3>
+          <p>Три экрана: добавить книги, открыть, читать. Режим «Только чтение»
+             скрывает каталоги и статистику.</p>
+        </div>
+        <div class="card">
+          <span class="badge">Локально</span>
+          <h3>Данные у вас</h3>
+          <p>Библиотека, заметки и настройки хранятся локально. Резервная копия —
+             одним архивом. Онлайн-перевод включается только по вашему выбору.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="wrap">
+      <h2>Тарифы</h2>
+      <p class="sub">Базовая читалка — бесплатно. Pro — для тех, кто хочет
+        синхронизацию и развитие проекта.</p>
+      <div class="grid cards-2">
+        <div class="card">
+          <span class="badge">Free</span>
+          <div class="price">0 ₽</div>
+          <ul>
+            <li>Библиотека и все четыре формата</li>
+            <li>Читалка, темы и полноэкранный режим</li>
+            <li>Заметки, цитаты и экспорт</li>
+            <li>Офлайн-словарь FreeDict</li>
+            <li>Каталоги Gutenberg и Викитека</li>
+            <li>Резервная копия вручную</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge">Pro · скоро</span>
+          <div class="price">990 ₽ <small>разово</small></div>
+          <ul>
+            <li>Всё из Free</li>
+            <li>Синхронизация библиотеки и заметок</li>
+            <li>Автоматические резервные копии</li>
+            <li>Ранний доступ к обновлениям</li>
+            <li>Приоритетная поддержка</li>
+          </ul>
+        </div>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-top:18px">
+        Цены — ориентир для теста. Перед продажей нужны лицензия PyMuPDF,
+        юридические документы и проверка спроса.
+      </p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2>Частые вопросы</h2>
+      <div class="grid cards-2">
+        <div class="card">
+          <h3>Это заменит Calibre?</h3>
+          <p>Нет. Calibre — комбайн для каталога и конвертации. «Читалка» —
+             про чтение и простую домашнюю библиотеку.</p>
+        </div>
+        <div class="card">
+          <h3>Нужен интернет?</h3>
+          <p>Нет для библиотеки, чтения и офлайн-словаря. Интернет — для каталогов,
+             Викисловаря и перевода, если вы его настроили.</p>
+        </div>
+        <div class="card">
+          <h3>Куда уходят данные?</h3>
+          <p>Библиотека и заметки остаются локально. Наружу уходит только то,
+             что вы сами отправили в каталог, словарь или переводчик.</p>
+        </div>
+        <div class="card">
+          <h3>Будет ли мобильная версия?</h3>
+          <p>Сейчас продукт сфокусирован на Windows. Мобильная версия и
+             синхронизация — возможное направление Pro.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    © 2026 Читалка · <a href="../legal/EULA.md" style="color:var(--muted)">EULA</a> ·
+    <a href="../legal/PRIVACY.md" style="color:var(--muted)">Конфиденциальность</a>
+  </div>
+</footer>
+</body>
+</html>

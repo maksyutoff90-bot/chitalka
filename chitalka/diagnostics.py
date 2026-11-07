@@ -361,6 +361,20 @@ def run_selftest() -> int:
                 except Exception as exc:  # noqa: BLE001
                     ok = False
                     lines.append(f"ОШИБКА справки: {exc}")
+                try:
+                    from .ui.about import AboutWindow
+
+                    about = AboutWindow(app, app.palette)
+                    _pump(app, 0.4)
+                    if not about.winfo_exists():
+                        ok = False
+                        lines.append("ОШИБКА: окно «О программе» не открылось")
+                    else:
+                        lines.append("О программе: лицензии доступны")
+                        about.destroy()
+                except Exception as exc:  # noqa: BLE001
+                    ok = False
+                    lines.append(f"ОШИБКА окна «О программе»: {exc}")
             else:
                 ok = False
                 lines.append("ОШИБКА: окно чтения не открылось")
